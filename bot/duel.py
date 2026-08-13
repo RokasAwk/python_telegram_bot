@@ -1,7 +1,10 @@
+import asyncio
 import random
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+
+ROUND_DELAY_SECONDS = 1
 
 MY_SKILLS = [
     "撞擊", "影子球", "雷劈", "火球", "水槍", "星爆氣流斬", "十字光輝", "煉獄枷鎖",
@@ -28,61 +31,83 @@ def skill_effect_text(atk: int) -> str:
     return "沒什麼效果"
 
 
-async def run_duel_round(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str):
+async def run_duel(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str):
     chat_data = context.chat_data
     send = context.bot.send_message
 
     if chat_data.get("in_game"):
-        await send(chat_id, "繼續決鬥！")
-    else:
-        await send(chat_id, "戰鬥開始！")
-        chat_data["my_hp"] = 500
-        chat_data["bot_hp"] = 500
-
-    my_atk = random.randint(0, 100)
-    await send(
-        chat_id,
-        f"{name}使出 {random.choice(MY_SKILLS)}，{skill_effect_text(my_atk)}，造成{my_atk}點傷害！",
-    )
-    chat_data["bot_hp"] -= my_atk
-
-    if chat_data["bot_hp"] <= 0:
-        await send(chat_id, "荒野猛獸倒下了！")
-        chat_data["in_game"] = False
+        # 已經有一場決鬥正在自動進行中，忽略重複觸發（例如連點按鈕）
         return
 
-    await send(chat_id, f"荒野猛獸剩下{chat_data['bot_hp']}點生命！")
     chat_data["in_game"] = True
+    chat_data["my_hp"] = 500
+    chat_data["bot_hp"] = 500
+    await send(chat_id, "戰鬥開始！（輸入 /stop 可以隨時中止決鬥）")
 
-    bot_atk = random.randint(0, 100)
-    await send(
-        chat_id,
-        f"荒野猛獸反擊使出 {random.choice(BOT_SKILLS)}，"
-        f"{skill_effect_text(bot_atk)}，造成{name}{bot_atk}點傷害！",
-    )
-    chat_data["my_hp"] -= bot_atk
+    try:
+        while True:
+            my_atk = random.randint(0, 100)
+            await send(
+                chat_id,
+                f"{name}使出 {random.choice(MY_SKILLS)}，{skill_effect_text(my_atk)}，造成{my_atk}點傷害！",
+            )
+            chat_data["bot_hp"] -= my_atk
+            await asyncio.sleep(ROUND_DELAY_SECONDS)
 
-    if chat_data["my_hp"] <= 0:
-        await send(chat_id, "你倒下了......")
+            if chat_data["bot_hp"] <= 0:
+                await send(chat_id, "荒野猛獸倒下了！你贏得了這場決鬥！", reply_markup=ATTACK_KEYBOARD)
+                return
+
+            await send(chat_id, f"荒野猛獸剩下{chat_data['bot_hp']}點生命！")
+            await asyncio.sleep(ROUND_DELAY_SECONDS)
+
+            bot_atk = random.randint(0, 100)
+            await send(
+                chat_id,
+                f"荒野猛獸反擊使出 {random.choice(BOT_SKILLS)}，"
+                f"{skill_effect_text(bot_atk)}，造成{name}{bot_atk}點傷害！",
+            )
+            chat_data["my_hp"] -= bot_atk
+            await asyncio.sleep(ROUND_DELAY_SECONDS)
+
+            if chat_data["my_hp"] <= 0:
+                await send(chat_id, "你倒下了......荒野猛獸獲勝！", reply_markup=ATTACK_KEYBOARD)
+                return
+
+            await send(chat_id, f"你剩下{chat_data['my_hp']}點生命！")
+            await asyncio.sleep(ROUND_DELAY_SECONDS)
+    except asyncio.CancelledError:
+        await send(chat_id, "決鬥已中止！")
+        raise
+    finally:
         chat_data["in_game"] = False
-    else:
-        # 附上攻擊按鈕，之後不用再手打「攻擊」兩個字
-        await send(chat_id, f"你剩下{chat_data['my_hp']}點生命！", reply_markup=ATTACK_KEYBOARD)
-        chat_data["in_game"] = True
+        chat_data.pop("duel_task", None)
+
+
+def _start_duel(context: ContextTypes.DEFAULT_TYPE, chat_id: int, name: str):
+    # 用背景 task 執行，這樣 /stop 才能在決鬥自動跑的過程中被處理並中止它
+    task = asyncio.create_task(run_duel(context, chat_id, name))
+    context.chat_data["duel_task"] = task
 
 
 async def attack_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await run_duel_round(context, update.effective_chat.id, update.effective_user.first_name)
+    _start_duel(context, update.effective_chat.id, update.effective_user.first_name)
 
 
 async def handle_attack_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
-    await run_duel_round(
-        context, update.effective_chat.id, update.effective_user.first_name
-    )
+    _start_duel(context, update.effective_chat.id, update.effective_user.first_name)
 
 
 async def rule_duel(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     if text != "攻擊":
         return
-    await run_duel_round(context, update.effective_chat.id, update.effective_user.first_name)
+    _start_duel(context, update.effective_chat.id, update.effective_user.first_name)
+
+
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    task = context.chat_data.get("duel_task")
+    if task and not task.done():
+        task.cancel()
+    else:
+        await update.message.reply_text("目前沒有進行中的決鬥可以中止。")

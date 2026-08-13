@@ -11,7 +11,7 @@ from telegram.ext import (
 from .basic_commands import help_command, start, website
 from .callbacks import error_handler, handle_callback_query
 from .config import BOT_TOKEN, logger
-from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback
+from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback, stop_command
 from .text_dispatch import handle_text
 from .weather import handle_weather_city_callback, handle_weather_period_callback, weather
 
@@ -22,6 +22,7 @@ BOT_COMMANDS = [
     BotCommand("website", "壽司狼哥哥的網站連結"),
     BotCommand("weather", "查詢台灣各縣市天氣"),
     BotCommand("attack", "攻擊荒野猛獸，開始決鬥"),
+    BotCommand("stop", "中止正在進行的決鬥"),
 ]
 
 
@@ -42,6 +43,7 @@ def main():
     app.add_handler(CommandHandler("website", website))
     app.add_handler(CommandHandler("weather", weather))
     app.add_handler(CommandHandler("attack", attack_command))
+    app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(
         CallbackQueryHandler(handle_attack_callback, pattern=f"^{ATTACK_CALLBACK_DATA}$")
     )

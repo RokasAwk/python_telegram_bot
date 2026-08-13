@@ -52,7 +52,8 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "/help - 顯示常用問句選單\n"
         "/website - 壽司狼哥哥的網站連結\n"
         "/weather - 查詢台灣各縣市天氣\n"
-        "/attack - 攻擊荒野猛獸，開始決鬥"
+        "/attack - 攻擊荒野猛獸，開始決鬥\n"
+        "/stop - 中止正在進行的決鬥"
     )
 
 
