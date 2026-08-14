@@ -11,6 +11,7 @@ truststore.inject_into_ssl()
 # 讀取 .env 檔裡的環境變數（BOT_TOKEN、CWA_API_KEY、TDX_CLIENT_ID、TDX_CLIENT_SECRET）
 load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 CWA_API_KEY = os.environ.get("CWA_API_KEY")
 CWA_DATASTORE_BASE_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore"
 

@@ -38,6 +38,7 @@ async def rule_identity(update: Update, context: ContextTypes.DEFAULT_TYPE, text
         "壽司狼是我大哥！\n\n"
         "我還在努力學習成為一隻實用的狼，我會盡量很可愛❤️"
     )
+    return True
 
 
 async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -55,6 +56,7 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "/attack - 攻擊荒野猛獸，開始決鬥\n"
         "/stop - 中止正在進行的決鬥"
     )
+    return True
 
 
 async def rule_no_sleep(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -66,6 +68,7 @@ async def rule_no_sleep(update: Update, context: ContextTypes.DEFAULT_TYPE, text
         STICKER_ID,
         reply_to_message_id=update.message.message_id,
     )
+    return True
 
 
 async def rule_food(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -73,6 +76,7 @@ async def rule_food(update: Update, context: ContextTypes.DEFAULT_TYPE, text: st
         return
     name = update.effective_user.first_name
     await update.message.reply_text(f"{name}，你今天吃{random.choice(EAT_OPTIONS)}！")
+    return True
 
 
 async def rule_drink(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -80,6 +84,7 @@ async def rule_drink(update: Update, context: ContextTypes.DEFAULT_TYPE, text: s
         return
     name = update.effective_user.first_name
     await update.message.reply_text(f"{name}，你今天喝{random.choice(DRINK_OPTIONS)}！")
+    return True
 
 
 async def rule_fortune(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -87,6 +92,7 @@ async def rule_fortune(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
         return
     name = update.effective_user.first_name
     await update.message.reply_text(f"{name}，你今天的運勢是{random.choice(LUCK_OPTIONS)}！")
+    return True
 
 
 async def rule_oracle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -95,8 +101,9 @@ async def rule_oracle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: 
     for keyword, options in ORACLE_RULES:
         if keyword in text:
             await update.message.reply_text(random.choice(options))
-            return
+            return True
     await update.message.reply_text("你還是問天吧")
+    return True
 
 
 async def rule_refuse(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
@@ -106,4 +113,5 @@ async def rule_refuse(update: Update, context: ContextTypes.DEFAULT_TYPE, text: 
         await update.message.reply_text("嫑")
     else:
         await update.message.reply_text("要")
+    return True
 

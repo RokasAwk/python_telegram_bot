@@ -26,3 +26,5 @@ async def rule_rps(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
     if win_times == 3:
         await update.message.reply_text("好啊！都這樣啊！都給你玩就好了啊")
         context.chat_data["win_times"] = 0
+
+    return True

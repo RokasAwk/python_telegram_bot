@@ -1,6 +1,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from .ai import ask_ai
 from .chat_rules import (
     rule_capability,
     rule_drink,
@@ -32,4 +33,10 @@ TEXT_RULES = [
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     for rule in TEXT_RULES:
-        await rule(update, context, text)
+        if await rule(update, context, text):
+            return
+
+    # 所有規則都沒命中，才啟用 AI 備援回覆
+    reply = await ask_ai(text, update.effective_user.first_name)
+    if reply:
+        await update.message.reply_text(reply)

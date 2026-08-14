@@ -103,6 +103,7 @@ async def rule_duel(update: Update, context: ContextTypes.DEFAULT_TYPE, text: st
     if text != "攻擊":
         return
     _start_duel(context, update.effective_chat.id, update.effective_user.first_name)
+    return True
 
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
