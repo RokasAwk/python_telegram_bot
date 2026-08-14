@@ -22,7 +22,9 @@ STATION_BUTTONS_PER_ROW = 4
 # 出入口跟設施資料變動不頻繁，快取一段時間避免每次點站名都重打 TDX API
 DATA_CACHE_TTL_SECONDS = 3600
 
-ESCALATOR_LABELS = {0: "無手扶梯", 1: "手扶梯（雙向）", 2: "手扶梯（僅出站）", 3: "手扶梯（僅入站）"}
+# TDX Escalator 欄位：0:沒有,1:雙向,2:出站(往上),3:入站(往下)
+ESCALATOR_SYMBOLS = {0: "❌", 1: "↕️", 2: "⬆️", 3: "⬇️"}
+YES_NO_SYMBOLS = {True: "⭕", False: "❌"}
 
 _token_cache = {"access_token": None, "expires_at": 0.0}
 _station_cache = {}  # rail_system -> {"expires_at": ts, "stations": {station_id: {...}}}
@@ -247,10 +249,10 @@ def _format_station_text(station: dict) -> str:
         # TDX 的 ExitID 有些車站（如台北車站）是空字串，這種名稱本身就帶編號（M4、M8...）了，
         # 所以只有 ExitID 有值時才加在前面，避免多出一個空白
         exit_name = exit_item["ExitName"]["Zh_tw"]
-        stair = "有" if exit_item.get("Stair") else "無"
-        elevator = "有" if exit_item.get("Elevator") else "無"
-        escalator = ESCALATOR_LABELS.get(exit_item.get("Escalator", 0), "無手扶梯")
-        lines.append(f"{exit_name}｜樓梯：{stair}｜電梯：{elevator}｜{escalator}")
+        stair = YES_NO_SYMBOLS[bool(exit_item.get("Stair"))]
+        elevator = YES_NO_SYMBOLS[bool(exit_item.get("Elevator"))]
+        escalator = ESCALATOR_SYMBOLS.get(exit_item.get("Escalator", 0), "❌")
+        lines.append(f"{exit_name}\n樓梯：{stair}｜電梯：{elevator}｜手扶梯：{escalator}\n")
 
     if station["elevators"]:
         lines.append("\n♿ 無障礙電梯位置")
