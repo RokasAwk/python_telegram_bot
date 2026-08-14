@@ -1,6 +1,6 @@
 import pytest
 
-from bot.basic_commands import help_command, start, website
+from bot.basic_commands import help_command, rename, start, website
 
 
 async def test_start_greets_user_by_first_name(make_update, make_context):
@@ -12,6 +12,25 @@ async def test_start_greets_user_by_first_name(make_update, make_context):
     update.message.reply_text.assert_awaited_once()
     (text,), _ = update.message.reply_text.call_args
     assert "小明" in text
+
+
+async def test_start_sets_awaiting_nickname_flag(make_update, make_context):
+    update = make_update(text="/start")
+    context = make_context()
+
+    await start(update, context)
+
+    assert context.user_data["awaiting_nickname"] is True
+
+
+async def test_rename_sets_awaiting_nickname_flag(make_update, make_context):
+    update = make_update(text="/rename")
+    context = make_context()
+
+    await rename(update, context)
+
+    assert context.user_data["awaiting_nickname"] is True
+    update.message.reply_text.assert_awaited_once()
 
 
 async def test_help_command_sends_reply_keyboard_with_two_options(make_update, make_context):

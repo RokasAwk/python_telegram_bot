@@ -50,6 +50,7 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "你可以考慮抖內我，或許我也可以考慮跟你聊更多？\n\n"
         "以下是我聽得懂的斜線指令：\n"
         "/start - 跟我打招呼\n"
+        "/rename - 改變我對你的稱呼\n"
         "/help - 顯示常用問句選單\n"
         "/website - 壽司狼哥哥的網站連結\n"
         "/weather - 查詢台灣各縣市天氣\n"

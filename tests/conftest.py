@@ -66,6 +66,7 @@ def make_context():
         context.bot.send_message = AsyncMock()
         context.bot.send_sticker = AsyncMock()
         context.chat_data = {}
+        context.user_data = {}
         return context
 
     return _make

@@ -8,7 +8,7 @@ from telegram.ext import (
     filters,
 )
 
-from .basic_commands import help_command, start, website
+from .basic_commands import help_command, rename, start, website
 from .callbacks import error_handler, handle_callback_query
 from .config import BOT_TOKEN, logger
 from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback, stop_command
@@ -19,6 +19,7 @@ from .weather import handle_weather_city_callback, handle_weather_period_callbac
 # 顯示在 Telegram 輸入框旁「/」選單裡的指令說明，跟 chat_rules.rule_capability 的介紹保持一致
 BOT_COMMANDS = [
     BotCommand("start", "跟我打招呼"),
+    BotCommand("rename", "改變我對你的稱呼"),
     BotCommand("help", "顯示常用問句選單"),
     BotCommand("website", "壽司狼哥哥的網站連結"),
     BotCommand("weather", "查詢台灣各縣市天氣"),
@@ -41,6 +42,7 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(_register_commands).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("rename", rename))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("website", website))
     app.add_handler(CommandHandler("weather", weather))

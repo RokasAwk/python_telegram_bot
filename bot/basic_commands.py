@@ -8,7 +8,15 @@ from telegram.ext import ContextTypes
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"你好，{update.effective_user.first_name}！")
+    context.user_data["awaiting_nickname"] = True
+    await update.message.reply_text(
+        f"你好，{update.effective_user.first_name}！之後想讓我怎麼稱呼你呢？"
+    )
+
+
+async def rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["awaiting_nickname"] = True
+    await update.message.reply_text("好啊，那我要叫你什麼呢？")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
