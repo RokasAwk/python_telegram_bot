@@ -94,17 +94,30 @@ async def _load_system_stations(rail_system: str) -> dict | None:
     for item in exits:
         station = stations.setdefault(
             item["StationID"],
-            {"name": item["StationName"]["Zh_tw"], "exits": [], "elevators": [], "toilets": []},
+            {
+                "name": item["StationName"]["Zh_tw"],
+                "exits": [],
+                "elevators": [],
+                "toilets": [],
+                "drinking_fountains": [],
+            },
         )
         station["exits"].append(item)
 
     for item in facilities or []:
         station = stations.setdefault(
             item["StationID"],
-            {"name": item["StationName"]["Zh_tw"], "exits": [], "elevators": [], "toilets": []},
+            {
+                "name": item["StationName"]["Zh_tw"],
+                "exits": [],
+                "elevators": [],
+                "toilets": [],
+                "drinking_fountains": [],
+            },
         )
         station["elevators"] = item.get("Elevators") or []
         station["toilets"] = item.get("Toilets") or []
+        station["drinking_fountains"] = item.get("DrinkingFountains") or []
 
     if facilities is not None:
         _station_cache[rail_system] = {"expires_at": now + DATA_CACHE_TTL_SECONDS, "stations": stations}
@@ -265,7 +278,12 @@ def _format_station_text(station: dict) -> str:
     else:
         lines.append("\n🚻 廁所：查無資料")
 
-    # TDX 捷運站設施 API 目前沒有寄物櫃欄位，所以查不到
-    lines.append("\n🧳 寄物櫃：TDX 沒有提供這項資料，建議到現場詢問處確認")
+    if station["drinking_fountains"]:
+        lines.append("\n🚰 飲水機位置")
+        lines.extend(
+            f"{d.get('FloorLevel', '')} {d['Description']}".strip() for d in station["drinking_fountains"]
+        )
+    else:
+        lines.append("\n🚰 飲水機：查無資料")
 
     return "\n".join(lines)
