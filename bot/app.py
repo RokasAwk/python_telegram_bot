@@ -7,12 +7,14 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
 
 from .basic_commands import help_command, rename, start, website
 from .callbacks import error_handler, handle_callback_query
 from .config import BOT_TOKEN, logger
 from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback, stop_command
 from .mrt import handle_mrt_line_callback, handle_mrt_station_callback, handle_mrt_system_callback, mrt
+from .net import KEEPALIVE_SOCKET_OPTIONS
 from .text_dispatch import handle_text
 from .weather import handle_weather_city_callback, handle_weather_period_callback, weather
 
@@ -39,7 +41,16 @@ def main():
             "找不到 BOT_TOKEN，請在同一目錄建立 .env 檔，內容為：\nBOT_TOKEN=你的token"
         )
 
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(_register_commands).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .request(HTTPXRequest(socket_options=KEEPALIVE_SOCKET_OPTIONS))
+        .get_updates_request(
+            HTTPXRequest(connection_pool_size=1, socket_options=KEEPALIVE_SOCKET_OPTIONS)
+        )
+        .post_init(_register_commands)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("rename", rename))

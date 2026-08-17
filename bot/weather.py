@@ -1,3 +1,4 @@
+import ssl
 from datetime import datetime, timedelta
 
 import httpx
@@ -5,6 +6,12 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from .config import CWA_API_KEY, CWA_DATASTORE_BASE_URL, logger
+
+# 氣象署憑證鏈（TWCA Secure SSL Certification Authority）缺 Subject Key Identifier
+# 擴充欄位，Python 3.13+ 預設開啟的 VERIFY_X509_STRICT 會判定驗證失敗，
+# 但憑證鏈本身是有效的（openssl s_client 驗證得過），所以只針對氣象署連線關掉這個嚴格旗標
+_CWA_SSL_CONTEXT = httpx.create_ssl_context()
+_CWA_SSL_CONTEXT.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
 # 中央氣象署已下架縣市層級的「一週縣市天氣預報」（F-C0032-005），一週資料現在併進
 # 鄉鎮天氣預報（F-D0047 系列），每個縣市各自一組 dataset id，且是以鄉鎮為單位。
@@ -119,7 +126,7 @@ async def fetch_daily_weather_text(city: str) -> str:
         "elementName": "Wx,MaxT,MinT,PoP",
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=_CWA_SSL_CONTEXT) as client:
             resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{DAILY_FORECAST_DATASET_ID}", params=params)
             resp.raise_for_status()
             data = resp.json()
@@ -179,7 +186,7 @@ async def fetch_3day_weather_text(city: str) -> str:
         "ElementName": "天氣現象,溫度,3小時降雨機率",
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=_CWA_SSL_CONTEXT) as client:
             resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{dataset_id}", params=params)
             resp.raise_for_status()
             data = resp.json()
@@ -263,7 +270,7 @@ async def fetch_weekly_weather_text(city: str) -> str:
         "ElementName": "天氣現象,最高溫度,最低溫度,12小時降雨機率",
     }
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, verify=_CWA_SSL_CONTEXT) as client:
             resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{dataset_id}", params=params)
             resp.raise_for_status()
             data = resp.json()

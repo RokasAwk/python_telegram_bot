@@ -46,8 +46,8 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         return
     await update.message.reply_text(
         "嗨！很高興你問我會什麼？\n\n"
-        "你可以跟我聊天，但是不一定會回你，我又不是chatGPT🌚\n\n"
-        "你可以考慮抖內我，或許我也可以考慮跟你聊更多？\n\n"
+        "你可以跟我聊天看看！\n\n"
+        "你也可以考慮抖內我，或許我也可以考慮跟你聊更多？\n\n"
         "以下是我聽得懂的斜線指令：\n"
         "/start - 跟我打招呼\n"
         "/rename - 改變我對你的稱呼\n"

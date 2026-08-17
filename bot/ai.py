@@ -1,7 +1,9 @@
+import httpx
 from google import genai
 from google.genai import errors, types
 
 from .config import GEMINI_API_KEY, logger
+from .net import KEEPALIVE_SOCKET_OPTIONS
 
 SYSTEM_PROMPT = (
     "你是「壽司小狼」，壽司狼的可愛小弟，在 Telegram 群組裡跟大家聊天。"
@@ -14,7 +16,19 @@ MODEL_NAME = "gemini-3.5-flash-lite"
 # 額度用完時的固定回覆；其他非預期錯誤則靜默不回，避免洗版
 QUOTA_EXCEEDED_REPLY = "我剛剛聊天聊到有點累，晚點再找我～"
 
-_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+_client = (
+    genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options=types.HttpOptions(
+            timeout=30_000,
+            async_client_args={
+                "transport": httpx.AsyncHTTPTransport(socket_options=KEEPALIVE_SOCKET_OPTIONS)
+            },
+        ),
+    )
+    if GEMINI_API_KEY
+    else None
+)
 
 
 async def ask_ai(text: str, user_name: str) -> str | None:
