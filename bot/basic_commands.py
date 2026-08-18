@@ -30,19 +30,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def website(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def social_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    "Potato Media",
-                    url="https://www.potatomedia.co/users/89ef5e47-ef0a-466c-ba5c-37a4952457be",
-                ),
-                InlineKeyboardButton(
-                    "FaceBook",
+                    "📘 FaceBook",
                     url="https://www.facebook.com/ying.quguang?mibextid=LQQJ4d",
                 ),
-            ]
+                InlineKeyboardButton("🐦 Plurk", url="https://www.plurk.com/RokasAwk"),
+            ],
+            [
+                InlineKeyboardButton("𝕏 嵐瑾 & 拓格", url="https://x.com/RokasAwk"),
+                InlineKeyboardButton("𝕏 Riku & Hayate", url="https://x.com/kitsukawa_shiba"),
+            ],
         ]
     )
-    await update.message.reply_text("這邊是壽司狼哥哥的網站！", reply_markup=keyboard)
+    await update.message.reply_text("這邊是壽司狼哥哥的社群連結！", reply_markup=keyboard)

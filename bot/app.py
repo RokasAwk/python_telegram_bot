@@ -9,7 +9,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-from .basic_commands import help_command, rename, start, website
+from .basic_commands import help_command, rename, social_media, start
 from .callbacks import error_handler, handle_callback_query
 from .config import BOT_TOKEN, logger
 from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback, stop_command
@@ -34,7 +34,7 @@ BOT_COMMANDS = [
     BotCommand("start", "跟我打招呼"),
     BotCommand("rename", "改變我對你的稱呼"),
     BotCommand("help", "顯示常用問句選單"),
-    BotCommand("website", "壽司狼哥哥的網站連結"),
+    BotCommand("social_media", "壽司狼哥哥的社群連結"),
     BotCommand("weather", "查詢台灣各縣市天氣"),
     BotCommand("mrt", "查詢捷運車站出入口資訊"),
     BotCommand("mrtfare", "查詢捷運兩站間的全票票價"),
@@ -67,7 +67,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("rename", rename))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("website", website))
+    app.add_handler(CommandHandler("social_media", social_media))
     app.add_handler(CommandHandler("weather", weather))
     app.add_handler(CommandHandler("mrt", mrt))
     app.add_handler(CommandHandler("mrtfare", mrtfare))

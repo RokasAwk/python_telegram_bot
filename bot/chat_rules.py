@@ -52,8 +52,10 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "/start - 跟我打招呼\n"
         "/rename - 改變我對你的稱呼\n"
         "/help - 顯示常用問句選單\n"
-        "/website - 壽司狼哥哥的網站連結\n"
+        "/social_media - 壽司狼哥哥的社群連結\n"
         "/weather - 查詢台灣各縣市天氣\n"
+        "/mrt - 查詢捷運車站出入口\n"
+        "/mrtfare - 查詢捷運票價\n"
         "/attack - 攻擊荒野猛獸，開始決鬥\n"
         "/stop - 中止正在進行的決鬥"
     )

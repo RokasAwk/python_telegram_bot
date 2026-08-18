@@ -39,7 +39,8 @@ async def test_rule_capability_lists_slash_commands(make_update, make_context):
 
     assert handled is True
     (text,), _ = update.message.reply_text.call_args
-    assert "/start" in text and "/mrt" not in text  # /mrt 目前沒被列在說明文字裡
+    for command in ["/start", "/rename", "/help", "/social_media", "/weather", "/mrt", "/mrtfare", "/attack", "/stop"]:
+        assert command in text
 
 
 @pytest.mark.parametrize("text", ["睡覺", "好睏喔", "睏"])
