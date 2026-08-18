@@ -13,7 +13,18 @@ from .basic_commands import help_command, rename, start, website
 from .callbacks import error_handler, handle_callback_query
 from .config import BOT_TOKEN, logger
 from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback, stop_command
-from .mrt import handle_mrt_line_callback, handle_mrt_station_callback, handle_mrt_system_callback, mrt
+from .mrt import (
+    handle_fare_dest_line_callback,
+    handle_fare_dest_station_callback,
+    handle_fare_origin_line_callback,
+    handle_fare_origin_station_callback,
+    handle_fare_system_callback,
+    handle_mrt_line_callback,
+    handle_mrt_station_callback,
+    handle_mrt_system_callback,
+    mrt,
+    mrtfare,
+)
 from .net import KEEPALIVE_SOCKET_OPTIONS
 from .text_dispatch import handle_text
 from .weather import handle_weather_city_callback, handle_weather_period_callback, weather
@@ -26,6 +37,7 @@ BOT_COMMANDS = [
     BotCommand("website", "壽司狼哥哥的網站連結"),
     BotCommand("weather", "查詢台灣各縣市天氣"),
     BotCommand("mrt", "查詢捷運車站出入口資訊"),
+    BotCommand("mrtfare", "查詢捷運兩站間的全票票價"),
     BotCommand("attack", "攻擊荒野猛獸，開始決鬥"),
     BotCommand("stop", "中止正在進行的決鬥"),
 ]
@@ -58,6 +70,7 @@ def main():
     app.add_handler(CommandHandler("website", website))
     app.add_handler(CommandHandler("weather", weather))
     app.add_handler(CommandHandler("mrt", mrt))
+    app.add_handler(CommandHandler("mrtfare", mrtfare))
     app.add_handler(CommandHandler("attack", attack_command))
     app.add_handler(CommandHandler("stop", stop_command))
     app.add_handler(
@@ -68,6 +81,11 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_mrt_system_callback, pattern=r"^mrt:system:"))
     app.add_handler(CallbackQueryHandler(handle_mrt_line_callback, pattern=r"^mrt:line:"))
     app.add_handler(CallbackQueryHandler(handle_mrt_station_callback, pattern=r"^mrt:station:"))
+    app.add_handler(CallbackQueryHandler(handle_fare_system_callback, pattern=r"^fare:system:"))
+    app.add_handler(CallbackQueryHandler(handle_fare_origin_line_callback, pattern=r"^fare:origin_line:"))
+    app.add_handler(CallbackQueryHandler(handle_fare_origin_station_callback, pattern=r"^fare:origin_station:"))
+    app.add_handler(CallbackQueryHandler(handle_fare_dest_line_callback, pattern=r"^fare:dest_line:"))
+    app.add_handler(CallbackQueryHandler(handle_fare_dest_station_callback, pattern=r"^fare:dest_station:"))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)

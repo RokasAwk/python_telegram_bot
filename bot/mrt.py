@@ -22,6 +22,10 @@ STATION_BUTTONS_PER_ROW = 4
 # 出入口跟設施資料變動不頻繁，快取一段時間避免每次點站名都重打 TDX API
 DATA_CACHE_TTL_SECONDS = 3600
 
+# TDX ODFare 的 FareClass：實測只有 1 能確定是「全票／單程票」，其他代碼（3、4、5、7...）
+# 官方文件對照不夠明確，怕標錯票種誤導金額資訊，先只呈現全票
+FARE_CLASS_FULL_FARE = 1
+
 # TDX Escalator 欄位：0:沒有,1:雙向,2:出站(往上),3:入站(往下)
 ESCALATOR_SYMBOLS = {0: "❌", 1: "↕️", 2: "⬆️", 3: "⬇️"}
 YES_NO_SYMBOLS = {True: "⭕", False: "❌"}
@@ -62,14 +66,15 @@ async def _get_access_token() -> str | None:
     return _token_cache["access_token"]
 
 
-async def _tdx_get(path: str) -> list | None:
+async def _tdx_get(path: str, **params) -> list | None:
     token = await _get_access_token()
     if not token:
         return None
     headers = {"Authorization": f"Bearer {token}"}
+    query = {"$format": "JSON", **params}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"{TDX_API_BASE_URL}{path}", params={"$format": "JSON"}, headers=headers)
+            resp = await client.get(f"{TDX_API_BASE_URL}{path}", params=query, headers=headers)
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError:
@@ -100,6 +105,7 @@ async def _load_system_stations(rail_system: str) -> dict | None:
                 "elevators": [],
                 "toilets": [],
                 "drinking_fountains": [],
+                "facility_map_urls": [],
             },
         )
         station["exits"].append(item)
@@ -113,11 +119,13 @@ async def _load_system_stations(rail_system: str) -> dict | None:
                 "elevators": [],
                 "toilets": [],
                 "drinking_fountains": [],
+                "facility_map_urls": [],
             },
         )
         station["elevators"] = item.get("Elevators") or []
         station["toilets"] = item.get("Toilets") or []
         station["drinking_fountains"] = item.get("DrinkingFountains") or []
+        station["facility_map_urls"] = item.get("FacilityMapURLs") or []
 
     if facilities is not None:
         _station_cache[rail_system] = {"expires_at": now + DATA_CACHE_TTL_SECONDS, "stations": stations}
@@ -151,6 +159,15 @@ async def _load_system_lines(rail_system: str) -> dict | None:
 
     _line_cache[rail_system] = {"expires_at": now + DATA_CACHE_TTL_SECONDS, "lines": lines}
     return lines
+
+
+async def _fetch_od_fare(rail_system: str, origin_id: str, dest_id: str) -> dict | None:
+    # ODFare 本身就是任兩站直接配對好的價目表，不用逐站累加車資（捷運票價也不是逐站相加算的）
+    results = await _tdx_get(
+        f"/v2/Rail/Metro/ODFare/{rail_system}",
+        **{"$filter": f"OriginStationID eq '{origin_id}' and DestinationStationID eq '{dest_id}'"},
+    )
+    return results[0] if results else None
 
 
 async def mrt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,5 +302,200 @@ def _format_station_text(station: dict) -> str:
         )
     else:
         lines.append("\n🚰 飲水機：查無資料")
+
+    # 有些軌道系統（如臺北捷運）沒有把廁所/飲水機的詳細位置列給 TDX，只給了一份車站資訊圖，
+    # 查無資料時附上圖讓使用者自己找
+    if (not station["toilets"] or not station["drinking_fountains"]) and station["facility_map_urls"]:
+        lines.append("\n🗺 查無詳細位置時，可以參考車站資訊圖")
+        lines.extend(f"{m['MapName']['Zh_tw']}：{m['MapURL']}" for m in station["facility_map_urls"])
+
+    return "\n".join(lines)
+
+
+async def mrtfare(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = chunk(list(RAIL_SYSTEMS.items()), SYSTEM_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(name, callback_data=f"fare:system:{code}") for code, name in row] for row in rows]
+    )
+    await update.message.reply_text("要查哪個軌道系統的票價呢？", reply_markup=keyboard)
+
+
+async def handle_fare_system_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    rail_system = query.data.split(":", 2)[2]
+    await query.answer()
+    system_name = RAIL_SYSTEMS.get(rail_system, rail_system)
+
+    if not (TDX_CLIENT_ID and TDX_CLIENT_SECRET):
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "還沒設定 TDX_CLIENT_ID / TDX_CLIENT_SECRET，小狼查不到捷運資料，跟壽司狼哥哥說一下吧！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    lines = await _load_system_lines(rail_system)
+    if not lines:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            f"查不到{system_name}的路線資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    sorted_lines = sorted(lines.items(), key=lambda kv: kv[0])
+    rows = chunk(sorted_lines, LINE_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(info["name"], callback_data=f"fare:origin_line:{rail_system}:{line_id}")
+                for line_id, info in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"{system_name}要查「起站」是哪條路線呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+async def handle_fare_origin_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, line_id = query.data.split(":", 3)
+    await query.answer()
+
+    lines = await _load_system_lines(rail_system)
+    line = lines.get(line_id) if lines else None
+    if not line or not line["stations"]:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到這條路線的車站資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    rows = chunk(line["stations"], STATION_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(name, callback_data=f"fare:origin_station:{rail_system}:{sid}")
+                for sid, name in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"{line['name']}要查哪一站當「起站」呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+async def handle_fare_origin_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, origin_id = query.data.split(":", 3)
+    await query.answer()
+
+    lines = await _load_system_lines(rail_system)
+    if not lines:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到路線資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    sorted_lines = sorted(lines.items(), key=lambda kv: kv[0])
+    rows = chunk(sorted_lines, LINE_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    info["name"], callback_data=f"fare:dest_line:{rail_system}:{origin_id}:{line_id}"
+                )
+                for line_id, info in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "要查「到站」是哪條路線呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+async def handle_fare_dest_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, origin_id, line_id = query.data.split(":", 4)
+    await query.answer()
+
+    lines = await _load_system_lines(rail_system)
+    line = lines.get(line_id) if lines else None
+    if not line or not line["stations"]:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到這條路線的車站資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    rows = chunk(line["stations"], STATION_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(name, callback_data=f"fare:dest_station:{rail_system}:{origin_id}:{sid}")
+                for sid, name in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"{line['name']}要查哪一站當「到站」呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+async def handle_fare_dest_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, origin_id, dest_id = query.data.split(":", 4)
+    await query.answer()
+
+    fare = await _fetch_od_fare(rail_system, origin_id, dest_id)
+    if fare is None:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到這兩站之間的票價資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    await context.bot.send_message(
+        update.effective_chat.id,
+        _format_fare_text(fare),
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+def _format_fare_text(fare: dict) -> str:
+    origin_name = fare["OriginStationName"]["Zh_tw"]
+    dest_name = fare["DestinationStationName"]["Zh_tw"]
+    full_fare = next((f["Price"] for f in fare["Fares"] if f["FareClass"] == FARE_CLASS_FULL_FARE), None)
+    distance = fare.get("TravelDistance")
+
+    lines = [f"🚇 {origin_name} → {dest_name}"]
+    if full_fare is not None:
+        lines.append(f"💰 全票票價：NT$ {full_fare}")
+    else:
+        lines.append("💰 查無全票票價資料")
+    if distance:
+        lines.append(f"📏 里程：約 {distance} 公里")
 
     return "\n".join(lines)

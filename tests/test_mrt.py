@@ -5,16 +5,24 @@ import pytest
 
 import bot.mrt as mrt_module
 from bot.mrt import (
+    _fetch_od_fare,
+    _format_fare_text,
     _format_station_text,
     _get_access_token,
     _load_system_lines,
     _load_system_stations,
     _tdx_get,
     chunk,
+    handle_fare_dest_line_callback,
+    handle_fare_dest_station_callback,
+    handle_fare_origin_line_callback,
+    handle_fare_origin_station_callback,
+    handle_fare_system_callback,
     handle_mrt_line_callback,
     handle_mrt_station_callback,
     handle_mrt_system_callback,
     mrt,
+    mrtfare,
 )
 
 
@@ -145,6 +153,7 @@ async def test_load_system_stations_merges_exits_and_facilities(mocker):
             "Elevators": [{"Description": "電梯A"}],
             "Toilets": [{"Description": "廁所A"}],
             "DrinkingFountains": [{"Description": "飲水機A"}],
+            "FacilityMapURLs": [{"MapName": {"Zh_tw": "測試站資訊圖"}, "MapURL": "https://example.test/map.pdf"}],
         }
     ]
     mocker.patch("bot.mrt._tdx_get", new=AsyncMock(side_effect=[exits, facilities]))
@@ -156,6 +165,9 @@ async def test_load_system_stations_merges_exits_and_facilities(mocker):
     assert stations["S1"]["elevators"] == [{"Description": "電梯A"}]
     assert stations["S1"]["toilets"] == [{"Description": "廁所A"}]
     assert stations["S1"]["drinking_fountains"] == [{"Description": "飲水機A"}]
+    assert stations["S1"]["facility_map_urls"] == [
+        {"MapName": {"Zh_tw": "測試站資訊圖"}, "MapURL": "https://example.test/map.pdf"}
+    ]
 
 
 async def test_load_system_stations_returns_none_when_exits_missing(mocker):
@@ -231,6 +243,7 @@ def test_format_station_text_sorts_exits_and_shows_all_sections():
         "elevators": [{"FloorLevel": "B1", "Description": "近1號出口"}],
         "toilets": [],
         "drinking_fountains": [{"FloorLevel": "", "Description": "近2號出口"}],
+        "facility_map_urls": [],
     }
 
     text = _format_station_text(station)
@@ -246,13 +259,52 @@ def test_format_station_text_sorts_exits_and_shows_all_sections():
 
 
 def test_format_station_text_shows_no_data_message_when_no_facilities():
-    station = {"name": "測試站", "exits": [], "elevators": [], "toilets": [], "drinking_fountains": []}
+    station = {
+        "name": "測試站",
+        "exits": [],
+        "elevators": [],
+        "toilets": [],
+        "drinking_fountains": [],
+        "facility_map_urls": [],
+    }
 
     text = _format_station_text(station)
 
     assert "🚻 廁所：查無資料" in text
     assert "🚰 飲水機：查無資料" in text
     assert "♿ 無障礙電梯位置" not in text
+    assert "車站資訊圖" not in text  # 沒有 facility_map_urls 就不該顯示這段
+
+
+def test_format_station_text_shows_facility_map_when_toilets_and_drinking_missing():
+    station = {
+        "name": "測試站",
+        "exits": [],
+        "elevators": [],
+        "toilets": [],
+        "drinking_fountains": [],
+        "facility_map_urls": [{"MapName": {"Zh_tw": "測試站資訊圖"}, "MapURL": "https://example.test/map.pdf"}],
+    }
+
+    text = _format_station_text(station)
+
+    assert "🗺 查無詳細位置時，可以參考車站資訊圖" in text
+    assert "測試站資訊圖：https://example.test/map.pdf" in text
+
+
+def test_format_station_text_hides_facility_map_when_toilets_and_drinking_present():
+    station = {
+        "name": "測試站",
+        "exits": [],
+        "elevators": [],
+        "toilets": [{"Description": "廁所A"}],
+        "drinking_fountains": [{"Description": "飲水機A"}],
+        "facility_map_urls": [{"MapName": {"Zh_tw": "測試站資訊圖"}, "MapURL": "https://example.test/map.pdf"}],
+    }
+
+    text = _format_station_text(station)
+
+    assert "車站資訊圖" not in text
 
 
 # ---- handlers -----------------------------------------------------------------
@@ -348,7 +400,14 @@ async def test_handle_mrt_station_callback_missing_station_sends_error(make_call
 
 
 async def test_handle_mrt_station_callback_success_sends_formatted_text(make_callback_update, make_context, mocker):
-    station = {"name": "測試站", "exits": [], "elevators": [], "toilets": [], "drinking_fountains": []}
+    station = {
+        "name": "測試站",
+        "exits": [],
+        "elevators": [],
+        "toilets": [],
+        "drinking_fountains": [],
+        "facility_map_urls": [],
+    }
     mocker.patch("bot.mrt._load_system_stations", new=AsyncMock(return_value={"S1": station}))
     update = make_callback_update("mrt:station:TRTC:S1")
     context = make_context()
@@ -357,3 +416,249 @@ async def test_handle_mrt_station_callback_success_sends_formatted_text(make_cal
 
     text = context.bot.send_message.call_args.args[1]
     assert "測試站" in text
+
+
+# ---- _fetch_od_fare ------------------------------------------------------------
+
+
+async def test_fetch_od_fare_returns_first_result(mocker):
+    fare_record = {"OriginStationID": "S1", "DestinationStationID": "S2"}
+    tdx_get_mock = AsyncMock(return_value=[fare_record])
+    mocker.patch("bot.mrt._tdx_get", new=tdx_get_mock)
+
+    result = await _fetch_od_fare("TRTC", "S1", "S2")
+
+    assert result == fare_record
+    tdx_get_mock.assert_awaited_once_with(
+        "/v2/Rail/Metro/ODFare/TRTC", **{"$filter": "OriginStationID eq 'S1' and DestinationStationID eq 'S2'"}
+    )
+
+
+async def test_fetch_od_fare_returns_none_when_empty(mocker):
+    mocker.patch("bot.mrt._tdx_get", new=AsyncMock(return_value=[]))
+
+    assert await _fetch_od_fare("TRTC", "S1", "S2") is None
+
+
+async def test_fetch_od_fare_returns_none_when_request_fails(mocker):
+    mocker.patch("bot.mrt._tdx_get", new=AsyncMock(return_value=None))
+
+    assert await _fetch_od_fare("TRTC", "S1", "S2") is None
+
+
+# ---- _format_fare_text ----------------------------------------------------------
+
+
+def test_format_fare_text_shows_full_fare_and_distance():
+    fare = {
+        "OriginStationName": {"Zh_tw": "頂埔"},
+        "DestinationStationName": {"Zh_tw": "淡水"},
+        "Fares": [
+            {"TicketType": 1, "FareClass": 1, "Price": 65},
+            {"TicketType": 1, "FareClass": 3, "CitizenCode": "NWT", "Price": 26},
+        ],
+        "TravelDistance": 36.87,
+    }
+
+    text = _format_fare_text(fare)
+
+    assert "頂埔 → 淡水" in text
+    assert "全票票價：NT$ 65" in text
+    assert "36.87" in text
+
+
+def test_format_fare_text_skips_distance_when_zero():
+    fare = {
+        "OriginStationName": {"Zh_tw": "頂埔"},
+        "DestinationStationName": {"Zh_tw": "頂埔"},
+        "Fares": [{"TicketType": 1, "FareClass": 1, "Price": 20}],
+        "TravelDistance": 0,
+    }
+
+    text = _format_fare_text(fare)
+
+    assert "全票票價：NT$ 20" in text
+    assert "里程" not in text
+
+
+def test_format_fare_text_shows_placeholder_when_full_fare_missing():
+    fare = {
+        "OriginStationName": {"Zh_tw": "頂埔"},
+        "DestinationStationName": {"Zh_tw": "淡水"},
+        "Fares": [{"TicketType": 1, "FareClass": 3, "CitizenCode": "NWT", "Price": 26}],
+        "TravelDistance": 10,
+    }
+
+    text = _format_fare_text(fare)
+
+    assert "查無全票票價資料" in text
+
+
+# ---- fare handlers --------------------------------------------------------------
+
+
+async def test_mrtfare_command_sends_rail_system_keyboard(make_update, make_context):
+    update = make_update(text="/mrtfare")
+
+    await mrtfare(update, make_context())
+
+    update.message.reply_text.assert_awaited_once()
+    _, kwargs = update.message.reply_text.call_args
+    all_texts = [b.text for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert "臺北捷運" in all_texts
+
+
+async def test_handle_fare_system_callback_without_credentials_notifies_admin(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt.TDX_CLIENT_ID", None)
+    mocker.patch("bot.mrt.TDX_CLIENT_SECRET", None)
+    update = make_callback_update("fare:system:TRTC")
+    context = make_context()
+
+    await handle_fare_system_callback(update, context)
+
+    update.callback_query.answer.assert_awaited_once()
+    text = context.bot.send_message.call_args.args[1]
+    assert "TDX_CLIENT_ID" in text
+
+
+async def test_handle_fare_system_callback_no_lines_sends_error(make_callback_update, make_context, mocker):
+    mocker.patch("bot.mrt.TDX_CLIENT_ID", "id")
+    mocker.patch("bot.mrt.TDX_CLIENT_SECRET", "secret")
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=None))
+    update = make_callback_update("fare:system:TRTC")
+    context = make_context()
+
+    await handle_fare_system_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到" in text
+
+
+async def test_handle_fare_system_callback_success_sends_origin_line_keyboard(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt.TDX_CLIENT_ID", "id")
+    mocker.patch("bot.mrt.TDX_CLIENT_SECRET", "secret")
+    lines = {"L1": {"name": "測試線", "stations": [("S1", "第一站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("fare:system:TRTC")
+    context = make_context()
+
+    await handle_fare_system_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    buttons = [b.text for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert buttons == ["測試線"]
+    assert callback_data == ["fare:origin_line:TRTC:L1"]
+
+
+async def test_handle_fare_origin_line_callback_missing_line_sends_error(make_callback_update, make_context, mocker):
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value={}))
+    update = make_callback_update("fare:origin_line:TRTC:L1")
+    context = make_context()
+
+    await handle_fare_origin_line_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到這條路線" in text
+
+
+async def test_handle_fare_origin_line_callback_success_sends_origin_station_keyboard(
+    make_callback_update, make_context, mocker
+):
+    lines = {"L1": {"name": "測試線", "stations": [("S1", "第一站"), ("S2", "第二站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("fare:origin_line:TRTC:L1")
+    context = make_context()
+
+    await handle_fare_origin_line_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["fare:origin_station:TRTC:S1", "fare:origin_station:TRTC:S2"]
+
+
+async def test_handle_fare_origin_station_callback_no_lines_sends_error(make_callback_update, make_context, mocker):
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=None))
+    update = make_callback_update("fare:origin_station:TRTC:S1")
+    context = make_context()
+
+    await handle_fare_origin_station_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到路線資料" in text
+
+
+async def test_handle_fare_origin_station_callback_success_sends_dest_line_keyboard(
+    make_callback_update, make_context, mocker
+):
+    lines = {"L1": {"name": "測試線", "stations": [("S1", "第一站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("fare:origin_station:TRTC:S1")
+    context = make_context()
+
+    await handle_fare_origin_station_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["fare:dest_line:TRTC:S1:L1"]
+
+
+async def test_handle_fare_dest_line_callback_missing_line_sends_error(make_callback_update, make_context, mocker):
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value={}))
+    update = make_callback_update("fare:dest_line:TRTC:S1:L2")
+    context = make_context()
+
+    await handle_fare_dest_line_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到這條路線" in text
+
+
+async def test_handle_fare_dest_line_callback_success_sends_dest_station_keyboard(
+    make_callback_update, make_context, mocker
+):
+    lines = {"L2": {"name": "測試線二", "stations": [("S2", "第二站"), ("S3", "第三站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("fare:dest_line:TRTC:S1:L2")
+    context = make_context()
+
+    await handle_fare_dest_line_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["fare:dest_station:TRTC:S1:S2", "fare:dest_station:TRTC:S1:S3"]
+
+
+async def test_handle_fare_dest_station_callback_missing_fare_sends_error(make_callback_update, make_context, mocker):
+    mocker.patch("bot.mrt._fetch_od_fare", new=AsyncMock(return_value=None))
+    update = make_callback_update("fare:dest_station:TRTC:S1:S2")
+    context = make_context()
+
+    await handle_fare_dest_station_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到這兩站之間的票價" in text
+
+
+async def test_handle_fare_dest_station_callback_success_sends_formatted_text(
+    make_callback_update, make_context, mocker
+):
+    fare = {
+        "OriginStationName": {"Zh_tw": "頂埔"},
+        "DestinationStationName": {"Zh_tw": "淡水"},
+        "Fares": [{"TicketType": 1, "FareClass": 1, "Price": 65}],
+        "TravelDistance": 36.87,
+    }
+    mocker.patch("bot.mrt._fetch_od_fare", new=AsyncMock(return_value=fare))
+    update = make_callback_update("fare:dest_station:TRTC:S1:S2")
+    context = make_context()
+
+    await handle_fare_dest_station_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "頂埔 → 淡水" in text
+    assert "NT$ 65" in text
