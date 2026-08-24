@@ -56,6 +56,8 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "/weather - 查詢台灣各縣市天氣\n"
         "/mrt - 查詢捷運車站出入口\n"
         "/mrtfare - 查詢捷運票價\n"
+        "/thsrtime - 查詢高鐵今日時刻表\n"
+        "/thsrfare - 查詢高鐵票價\n"
         "/attack - 攻擊荒野猛獸，開始決鬥\n"
         "/stop - 中止正在進行的決鬥"
     )
