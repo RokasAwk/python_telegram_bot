@@ -1,0 +1,36 @@
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4 # 把觸發這次 workflow 的那個 commit 的程式碼,checkout 到 runner 的工作目錄裡
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: '3.14'
+                  cache: 'pip' # 會自動快取 pip 套件,加速下次 workflow 的 pip install
+
+            - name: Install dependencies
+              run: pip install -r requirements-dev.txt
+
+            - name: Run tests
+              run: pytest
+
+    docker-build:
+        runs-on: ubuntu-latest
+        needs: test # 先跑測試成功後再build
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Build Docker image
+              run: docker build -t python-tg-bot:ci .

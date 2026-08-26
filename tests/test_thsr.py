@@ -271,8 +271,8 @@ def test_format_timetable_text_marks_fastest_train_with_badge():
 
     text = _format_timetable_text("台北", "左營", "2026-08-19", trains)
 
-    assert "⚡最快　🚆 班次 0803" in text
-    assert "⚡最快　🚆 班次 0203" not in text
+    assert "🚆 班次 0803 ⚡" in text
+    assert "🚆 班次 0203 ⚡" not in text
     assert "🚆 班次 0203" in text
 
 
