@@ -13,6 +13,7 @@ from .basic_commands import help_command, rename, social_media, start
 from .callbacks import error_handler, handle_callback_query
 from .config import BOT_TOKEN, logger
 from .duel import ATTACK_CALLBACK_DATA, attack_command, handle_attack_callback, stop_command
+from .guess_number import guess_command, stop_guess_command
 from .mrt import (
     handle_fare_dest_line_callback,
     handle_fare_dest_station_callback,
@@ -50,6 +51,8 @@ BOT_COMMANDS = [
     BotCommand("thsrfare", "查詢高鐵兩站間的全票票價"),
     BotCommand("attack", "攻擊荒野猛獸，開始決鬥"),
     BotCommand("stop", "中止正在進行的決鬥"),
+    BotCommand("guessnumber", "跟壽司小狼玩終極密碼猜數字遊戲"),
+    BotCommand("stopguess", "中止正在進行的終極密碼遊戲"),
 ]
 
 
@@ -85,6 +88,8 @@ def main():
     app.add_handler(CommandHandler("thsrfare", thsrfare))
     app.add_handler(CommandHandler("attack", attack_command))
     app.add_handler(CommandHandler("stop", stop_command))
+    app.add_handler(CommandHandler("guessnumber", guess_command))
+    app.add_handler(CommandHandler("stopguess", stop_guess_command))
     app.add_handler(
         CallbackQueryHandler(handle_attack_callback, pattern=f"^{ATTACK_CALLBACK_DATA}$")
     )
