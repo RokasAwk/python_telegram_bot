@@ -1,10 +1,31 @@
+import functools
+import heapq
 import time
 
 import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from .config import TDX_API_BASE_URL, TDX_AUTH_URL, TDX_CLIENT_ID, TDX_CLIENT_SECRET, logger
+
+
+def dismiss_menu(handler):
+    """使用者點過選單按鈕後，就地把那則訊息的按鈕銷毀，避免又回頭點到同一層的舊選單。"""
+
+    @functools.wraps(handler)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if query is not None:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except TelegramError:
+                # 訊息太舊或已被改過都不影響後續查詢，忽略就好
+                pass
+        return await handler(update, context)
+
+    return wrapper
+
 
 # TDX 目前只有這幾個軌道系統同時支援「車站出入口」跟「車站設施」兩支 API
 # （貓空纜車 TRTCMG 有出入口資料但沒有設施資料，先不放進選單）
@@ -30,9 +51,15 @@ FARE_CLASS_FULL_FARE = 1
 ESCALATOR_SYMBOLS = {0: "❌", 1: "↕️", 2: "⬆️", 3: "⬇️"}
 YES_NO_SYMBOLS = {True: "⭕", False: "❌"}
 
+# 跨線轉乘的走路時間估計值。TDX 沒有 MRT 月台間轉乘時間的資料
+# （StationTransfer API 給的是轉乘 YouBike／公車／停車場），所以用一個保守的固定值，
+# 行車時間查詢的結果本來就標成「最少約」。
+INTERCHANGE_WALK_SECONDS = 180
+
 _token_cache = {"access_token": None, "expires_at": 0.0}
 _station_cache = {}  # rail_system -> {"expires_at": ts, "stations": {station_id: {...}}}
 _line_cache = {}  # rail_system -> {"expires_at": ts, "lines": {line_id: {"name": ..., "stations": [(id, name), ...]}}}
+_travel_time_cache = {}  # rail_system -> {"expires_at": ts, "segments": {(from_id, to_id): {"run": sec, "stop": sec}}}
 
 
 def chunk(items, size):
@@ -161,6 +188,138 @@ async def _load_system_lines(rail_system: str) -> dict | None:
     return lines
 
 
+async def _load_system_travel_times(rail_system: str) -> dict | None:
+    cached = _travel_time_cache.get(rail_system)
+    now = time.time()
+    if cached and cached["expires_at"] > now:
+        return cached["segments"]
+
+    data = await _tdx_get(f"/v2/Rail/Metro/S2STravelTime/{rail_system}")
+    if data is None:
+        return None
+
+    # S2STravelTime 是「一條路線一筆、裡面帶相鄰兩站的行駛/停靠秒數」，
+    # 攤平成 (起站, 迄站) -> 秒數 的查表，之後照使用者選的路線把中間每一段加起來
+    segments = {}
+    for line in data:
+        for seg in line.get("TravelTimes", []):
+            segments[(seg["FromStationID"], seg["ToStationID"])] = {
+                "run": seg.get("RunTime", 0),
+                "stop": seg.get("StopTime", 0),
+            }
+
+    _travel_time_cache[rail_system] = {"expires_at": now + DATA_CACHE_TTL_SECONDS, "segments": segments}
+    return segments
+
+
+def _interchange_groups(lines: dict) -> list:
+    # 轉乘站在每條線各有一個 line-prefixed StationID（例如忠孝復興 = BL15／BR10），
+    # 用「同名、不同 ID」把同一個實體車站的各月台認出來
+    by_name = {}
+    for line in lines.values():
+        for sid, name in line["stations"]:
+            by_name.setdefault(name, set()).add(sid)
+    return [sorted(ids) for ids in by_name.values() if len(ids) > 1]
+
+
+def _build_travel_graph(segments: dict, interchange_groups: list) -> dict:
+    # 把整個系統組成一張圖：搭車段（雙向、權重＝行駛＋停靠秒數）＋轉乘段（走路時間用估計值）
+    # kind 記著這條邊是「搭車」還是「轉乘」，之後才能拆出各佔多少時間、經過幾次轉乘
+    graph = {}
+
+    def add_edge(a, b, seconds, kind):
+        graph.setdefault(a, []).append((b, seconds, kind))
+
+    for (from_id, to_id), sec in segments.items():
+        weight = sec["run"] + sec["stop"]
+        add_edge(from_id, to_id, weight, "ride")
+        add_edge(to_id, from_id, weight, "ride")
+
+    for group in interchange_groups:
+        for from_id in group:
+            for to_id in group:
+                if from_id != to_id:
+                    add_edge(from_id, to_id, INTERCHANGE_WALK_SECONDS, "transfer")
+
+    return graph
+
+
+def _shortest_travel(graph: dict, origin_id: str, dest_id: str) -> tuple | None:
+    # 一般的 Dijkstra，回傳 (總秒數, 搭車秒數, 轉乘秒數, [轉乘站ID, ...])
+    if origin_id == dest_id:
+        return (0, 0, 0, [])
+    if origin_id not in graph or dest_id not in graph:
+        return None
+
+    best = {origin_id: (0, 0, 0)}  # node -> (總秒數, 搭車秒數, 轉乘秒數)
+    prev = {}  # node -> (前一站, kind)
+    pq = [(0, origin_id)]
+    visited = set()
+
+    while pq:
+        dist, node = heapq.heappop(pq)
+        if node in visited:
+            continue
+        visited.add(node)
+        if node == dest_id:
+            break
+        ride_so_far, transfer_so_far = best[node][1], best[node][2]
+        for neighbor, weight, kind in graph.get(node, []):
+            if neighbor in visited:
+                continue
+            new_dist = dist + weight
+            if neighbor not in best or new_dist < best[neighbor][0]:
+                best[neighbor] = (
+                    new_dist,
+                    ride_so_far + (weight if kind == "ride" else 0),
+                    transfer_so_far + (weight if kind == "transfer" else 0),
+                )
+                prev[neighbor] = (node, kind)
+                heapq.heappush(pq, (new_dist, neighbor))
+
+    if dest_id not in best:
+        return None
+
+    transfer_nodes = []
+    cur = dest_id
+    while cur in prev:
+        parent, kind = prev[cur]
+        if kind == "transfer":
+            transfer_nodes.append(parent)
+        cur = parent
+    transfer_nodes.reverse()
+
+    total, ride, transfer = best[dest_id]
+    return (total, ride, transfer, transfer_nodes)
+
+
+def _minutes(seconds: int) -> int:
+    return max(1, round(seconds / 60))
+
+
+def _format_travel_time_text(
+    system_name: str, origin_name: str, dest_name: str, id_to_name: dict, result: tuple
+) -> str:
+    total, ride, transfer, transfer_nodes = result
+
+    header = f"🚇 {origin_name} → {dest_name}"
+
+    if transfer_nodes:
+        names = "、".join(id_to_name.get(n, n) for n in transfer_nodes)
+        body = "\n".join(
+            [
+                f"🕐 最少約 {_minutes(total)} 分鐘"
+                f"（車上約 {_minutes(ride)} 分 + 轉乘步行約 {_minutes(transfer)} 分）",
+                f"🔁 轉乘 {len(transfer_nodes)} 次：{names}",
+            ]
+        )
+    else:
+        body = f"🕐 最少約 {_minutes(total)} 分鐘"
+
+    # 三段之間各空一行
+    return "\n\n".join([header, body, "＊不含月台候車時間，實際會再久一些"])
+
+
 async def _fetch_od_fare(rail_system: str, origin_id: str, dest_id: str) -> dict | None:
     # ODFare 本身就是任兩站直接配對好的價目表，不用逐站累加車資（捷運票價也不是逐站相加算的）
     results = await _tdx_get(
@@ -178,6 +337,7 @@ async def mrt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("要查哪個軌道系統的車站出入口呢？", reply_markup=keyboard)
 
 
+@dismiss_menu
 async def handle_mrt_system_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     rail_system = query.data.split(":", 2)[2]
@@ -220,6 +380,7 @@ async def handle_mrt_system_callback(update: Update, context: ContextTypes.DEFAU
     )
 
 
+@dismiss_menu
 async def handle_mrt_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, rail_system, line_id = query.data.split(":", 3)
@@ -250,6 +411,7 @@ async def handle_mrt_line_callback(update: Update, context: ContextTypes.DEFAULT
     )
 
 
+@dismiss_menu
 async def handle_mrt_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, rail_system, station_id = query.data.split(":", 3)
@@ -320,6 +482,7 @@ async def mrtfare(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("要查哪個軌道系統的票價呢？", reply_markup=keyboard)
 
 
+@dismiss_menu
 async def handle_fare_system_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     rail_system = query.data.split(":", 2)[2]
@@ -362,6 +525,7 @@ async def handle_fare_system_callback(update: Update, context: ContextTypes.DEFA
     )
 
 
+@dismiss_menu
 async def handle_fare_origin_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, rail_system, line_id = query.data.split(":", 3)
@@ -395,6 +559,7 @@ async def handle_fare_origin_line_callback(update: Update, context: ContextTypes
     )
 
 
+@dismiss_menu
 async def handle_fare_origin_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, rail_system, origin_id = query.data.split(":", 3)
@@ -430,6 +595,7 @@ async def handle_fare_origin_station_callback(update: Update, context: ContextTy
     )
 
 
+@dismiss_menu
 async def handle_fare_dest_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, rail_system, origin_id, line_id = query.data.split(":", 4)
@@ -463,6 +629,7 @@ async def handle_fare_dest_line_callback(update: Update, context: ContextTypes.D
     )
 
 
+@dismiss_menu
 async def handle_fare_dest_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, rail_system, origin_id, dest_id = query.data.split(":", 4)
@@ -499,3 +666,204 @@ def _format_fare_text(fare: dict) -> str:
         lines.append(f"📏 里程：約 {distance} 公里")
 
     return "\n".join(lines)
+
+
+# 行車時間查詢：跨線（同一個捷運系統內）用最短路徑算。流程比照 /mrtfare：
+# 系統 → 起站路線 → 起站 → 迄站路線 → 迄站。搭車段用 S2STravelTime，轉乘站用「同名不同 ID」認出來、
+# 走路時間用固定估計值（TDX 沒有月台間轉乘時間），也沒有候車資料，所以結果標成「最少約 X 分」。
+def _all_station_names(lines: dict) -> dict:
+    return {sid: name for line in lines.values() for sid, name in line["stations"]}
+
+
+async def _mrttime_no_data(context, chat_id, message_id):
+    await context.bot.send_message(
+        chat_id,
+        "查不到這兩站之間的行車時間資料欸，晚點再試試看！",
+        reply_to_message_id=message_id,
+    )
+
+
+async def mrttime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = chunk(list(RAIL_SYSTEMS.items()), SYSTEM_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(name, callback_data=f"mrttime:system:{code}") for code, name in row] for row in rows]
+    )
+    await update.message.reply_text("要查哪個軌道系統的行車時間呢？", reply_markup=keyboard)
+
+
+@dismiss_menu
+async def handle_mrttime_system_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    rail_system = query.data.split(":", 2)[2]
+    await query.answer()
+    system_name = RAIL_SYSTEMS.get(rail_system, rail_system)
+
+    if not (TDX_CLIENT_ID and TDX_CLIENT_SECRET):
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "還沒設定 TDX_CLIENT_ID / TDX_CLIENT_SECRET，小狼查不到捷運資料，跟壽司狼哥哥說一下吧！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    lines = await _load_system_lines(rail_system)
+    if not lines:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            f"查不到{system_name}的路線資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    sorted_lines = sorted(lines.items(), key=lambda kv: kv[0])
+    rows = chunk(sorted_lines, LINE_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(info["name"], callback_data=f"mrttime:oline:{rail_system}:{line_id}")
+                for line_id, info in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"{system_name}要查「起站」是哪條路線呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+@dismiss_menu
+async def handle_mrttime_origin_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, line_id = query.data.split(":", 3)
+    await query.answer()
+
+    lines = await _load_system_lines(rail_system)
+    line = lines.get(line_id) if lines else None
+    if not line or not line["stations"]:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到這條路線的車站資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    rows = chunk(line["stations"], STATION_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(name, callback_data=f"mrttime:ostn:{rail_system}:{sid}")
+                for sid, name in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"{line['name']}要從哪一站出發呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+@dismiss_menu
+async def handle_mrttime_origin_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, origin_id = query.data.split(":", 3)
+    await query.answer()
+
+    lines = await _load_system_lines(rail_system)
+    if not lines:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到路線資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    sorted_lines = sorted(lines.items(), key=lambda kv: kv[0])
+    rows = chunk(sorted_lines, LINE_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    info["name"], callback_data=f"mrttime:dline:{rail_system}:{origin_id}:{line_id}"
+                )
+                for line_id, info in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "要查「迄站」是哪條路線呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+@dismiss_menu
+async def handle_mrttime_dest_line_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, origin_id, line_id = query.data.split(":", 4)
+    await query.answer()
+
+    lines = await _load_system_lines(rail_system)
+    line = lines.get(line_id) if lines else None
+    if not line or not line["stations"]:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "查不到這條路線的車站資料欸，晚點再試試看！",
+            reply_to_message_id=query.message.message_id,
+        )
+        return
+
+    dest_stations = [(sid, name) for sid, name in line["stations"] if sid != origin_id]
+    rows = chunk(dest_stations, STATION_BUTTONS_PER_ROW)
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(name, callback_data=f"mrttime:dstn:{rail_system}:{origin_id}:{sid}")
+                for sid, name in row
+            ]
+            for row in rows
+        ]
+    )
+    await context.bot.send_message(
+        update.effective_chat.id,
+        f"{line['name']}要到哪一站呢？",
+        reply_markup=keyboard,
+        reply_to_message_id=query.message.message_id,
+    )
+
+
+@dismiss_menu
+async def handle_mrttime_dest_station_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, _, rail_system, origin_id, dest_id = query.data.split(":", 4)
+    await query.answer()
+    chat_id, message_id = update.effective_chat.id, query.message.message_id
+    system_name = RAIL_SYSTEMS.get(rail_system, rail_system)
+
+    lines = await _load_system_lines(rail_system)
+    segments = await _load_system_travel_times(rail_system)
+    if not lines or segments is None:
+        await _mrttime_no_data(context, chat_id, message_id)
+        return
+
+    graph = _build_travel_graph(segments, _interchange_groups(lines))
+    result = _shortest_travel(graph, origin_id, dest_id)
+    if result is None:
+        await _mrttime_no_data(context, chat_id, message_id)
+        return
+
+    id_to_name = _all_station_names(lines)
+    await context.bot.send_message(
+        chat_id,
+        _format_travel_time_text(
+            system_name, id_to_name.get(origin_id, origin_id), id_to_name.get(dest_id, dest_id), id_to_name, result
+        ),
+        reply_to_message_id=message_id,
+    )

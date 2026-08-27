@@ -1,11 +1,31 @@
+import functools
 import time
 from datetime import date, datetime
 
 import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from .config import TDX_API_BASE_URL, TDX_AUTH_URL, TDX_CLIENT_ID, TDX_CLIENT_SECRET, logger
+
+
+def dismiss_menu(handler):
+    """使用者點過選單按鈕後，就地把那則訊息的按鈕銷毀，避免又回頭點到同一層的舊選單。"""
+
+    @functools.wraps(handler)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        if query is not None:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except TelegramError:
+                # 訊息太舊或已被改過都不影響後續查詢，忽略就好
+                pass
+        return await handler(update, context)
+
+    return wrapper
+
 
 STATION_BUTTONS_PER_ROW = 4
 
@@ -196,6 +216,7 @@ async def thsrtime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@dismiss_menu
 async def handle_thsrtime_origin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     origin_id = query.data.split(":", 2)[2]
@@ -219,6 +240,7 @@ async def handle_thsrtime_origin_callback(update: Update, context: ContextTypes.
     )
 
 
+@dismiss_menu
 async def handle_thsrtime_dest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, origin_id, dest_id = query.data.split(":", 3)
@@ -266,6 +288,7 @@ async def thsrfare(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@dismiss_menu
 async def handle_thsrfare_origin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     origin_id = query.data.split(":", 2)[2]
@@ -289,6 +312,7 @@ async def handle_thsrfare_origin_callback(update: Update, context: ContextTypes.
     )
 
 
+@dismiss_menu
 async def handle_thsrfare_dest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     _, _, origin_id, dest_id = query.data.split(":", 3)

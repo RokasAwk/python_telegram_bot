@@ -5,12 +5,17 @@ import pytest
 
 import bot.mrt as mrt_module
 from bot.mrt import (
+    _build_travel_graph,
     _fetch_od_fare,
     _format_fare_text,
     _format_station_text,
+    _format_travel_time_text,
     _get_access_token,
+    _interchange_groups,
     _load_system_lines,
     _load_system_stations,
+    _load_system_travel_times,
+    _shortest_travel,
     _tdx_get,
     chunk,
     handle_fare_dest_line_callback,
@@ -21,8 +26,14 @@ from bot.mrt import (
     handle_mrt_line_callback,
     handle_mrt_station_callback,
     handle_mrt_system_callback,
+    handle_mrttime_dest_line_callback,
+    handle_mrttime_dest_station_callback,
+    handle_mrttime_origin_line_callback,
+    handle_mrttime_origin_station_callback,
+    handle_mrttime_system_callback,
     mrt,
     mrtfare,
+    mrttime,
 )
 
 
@@ -33,11 +44,13 @@ def reset_mrt_module_caches():
     mrt_module._token_cache["expires_at"] = 0.0
     mrt_module._station_cache.clear()
     mrt_module._line_cache.clear()
+    mrt_module._travel_time_cache.clear()
     yield
     mrt_module._token_cache["access_token"] = None
     mrt_module._token_cache["expires_at"] = 0.0
     mrt_module._station_cache.clear()
     mrt_module._line_cache.clear()
+    mrt_module._travel_time_cache.clear()
 
 
 class FakeResponse:
@@ -319,6 +332,41 @@ async def test_mrt_command_sends_rail_system_keyboard(make_update, make_context)
     _, kwargs = update.message.reply_text.call_args
     all_texts = [b.text for row in kwargs["reply_markup"].inline_keyboard for b in row]
     assert "臺北捷運" in all_texts
+
+
+@pytest.mark.parametrize(
+    "callback_data, handler_name",
+    [
+        ("mrt:system:TRTC", "handle_mrt_system_callback"),
+        ("mrt:line:TRTC:L1", "handle_mrt_line_callback"),
+        ("mrt:station:TRTC:S1", "handle_mrt_station_callback"),
+        ("fare:system:TRTC", "handle_fare_system_callback"),
+        ("fare:origin_line:TRTC:L1", "handle_fare_origin_line_callback"),
+        ("fare:origin_station:TRTC:S1", "handle_fare_origin_station_callback"),
+        ("fare:dest_line:TRTC:S1:L2", "handle_fare_dest_line_callback"),
+        ("fare:dest_station:TRTC:S1:S2", "handle_fare_dest_station_callback"),
+        ("mrttime:system:TRTC", "handle_mrttime_system_callback"),
+        ("mrttime:oline:TRTC:L1", "handle_mrttime_origin_line_callback"),
+        ("mrttime:ostn:TRTC:S1", "handle_mrttime_origin_station_callback"),
+        ("mrttime:dline:TRTC:S1:L2", "handle_mrttime_dest_line_callback"),
+        ("mrttime:dstn:TRTC:S1:S2", "handle_mrttime_dest_station_callback"),
+    ],
+)
+async def test_tdx_callbacks_dismiss_menu_buttons(
+    make_callback_update, make_context, mocker, callback_data, handler_name
+):
+    mocker.patch("bot.mrt.TDX_CLIENT_ID", "id")
+    mocker.patch("bot.mrt.TDX_CLIENT_SECRET", "secret")
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=None))
+    mocker.patch("bot.mrt._load_system_stations", new=AsyncMock(return_value=None))
+    mocker.patch("bot.mrt._load_system_travel_times", new=AsyncMock(return_value=None))
+    mocker.patch("bot.mrt._fetch_od_fare", new=AsyncMock(return_value=None))
+    update = make_callback_update(callback_data)
+    update.callback_query.edit_message_reply_markup = AsyncMock()
+
+    await getattr(mrt_module, handler_name)(update, make_context())
+
+    update.callback_query.edit_message_reply_markup.assert_awaited_once_with(reply_markup=None)
 
 
 async def test_handle_mrt_system_callback_without_credentials_notifies_admin(
@@ -662,3 +710,287 @@ async def test_handle_fare_dest_station_callback_success_sends_formatted_text(
     text = context.bot.send_message.call_args.args[1]
     assert "頂埔 → 淡水" in text
     assert "NT$ 65" in text
+
+
+# ---- _load_system_travel_times ------------------------------------------------
+
+
+async def test_load_system_travel_times_flattens_segments(mocker):
+    data = [
+        {
+            "LineID": "L1",
+            "TravelTimes": [
+                {"FromStationID": "S1", "ToStationID": "S2", "RunTime": 60, "StopTime": 20},
+                {"FromStationID": "S2", "ToStationID": "S3", "RunTime": 90, "StopTime": 25},
+            ],
+        }
+    ]
+    mocker.patch("bot.mrt._tdx_get", new=AsyncMock(return_value=data))
+
+    segments = await _load_system_travel_times("TRTC")
+
+    assert segments[("S1", "S2")] == {"run": 60, "stop": 20}
+    assert segments[("S2", "S3")] == {"run": 90, "stop": 25}
+
+
+async def test_load_system_travel_times_returns_none_when_request_fails(mocker):
+    mocker.patch("bot.mrt._tdx_get", new=AsyncMock(return_value=None))
+
+    assert await _load_system_travel_times("TRTC") is None
+
+
+async def test_load_system_travel_times_uses_cache_within_ttl(mocker):
+    tdx_get_mock = AsyncMock()
+    mocker.patch("bot.mrt._tdx_get", new=tdx_get_mock)
+    mrt_module._travel_time_cache["TRTC"] = {
+        "expires_at": mrt_module.time.time() + 100,
+        "segments": {("S1", "S2"): {"run": 1, "stop": 2}},
+    }
+
+    segments = await _load_system_travel_times("TRTC")
+
+    assert segments == {("S1", "S2"): {"run": 1, "stop": 2}}
+    tdx_get_mock.assert_not_called()
+
+
+# ---- _interchange_groups --------------------------------------------------
+
+
+def test_interchange_groups_matches_same_name_across_lines():
+    lines = {
+        "BL": {"name": "板南線", "stations": [("BL15", "忠孝復興"), ("BL14", "忠孝新生")]},
+        "BR": {"name": "文湖線", "stations": [("BR10", "忠孝復興"), ("BR09", "大安")]},
+        "R": {"name": "淡水信義線", "stations": [("R05", "大安"), ("R08", "中正紀念堂")]},
+    }
+
+    groups = sorted(_interchange_groups(lines))
+
+    assert groups == [["BL15", "BR10"], ["BR09", "R05"]]  # 忠孝復興、大安；忠孝新生單線不算
+
+
+def test_interchange_groups_empty_when_no_shared_names():
+    lines = {"L1": {"name": "一號線", "stations": [("A1", "甲"), ("A2", "乙")]}}
+
+    assert _interchange_groups(lines) == []
+
+
+# ---- _build_travel_graph / _shortest_travel --------------------------------
+
+SEGMENTS = {
+    ("BL1", "BL2"): {"run": 100, "stop": 20},
+    ("BL2", "BL3"): {"run": 110, "stop": 20},
+    ("R1", "R2"): {"run": 90, "stop": 20},
+    ("R2", "R3"): {"run": 95, "stop": 25},
+}
+GROUPS = [["BL2", "R2"]]  # 忠孝復興：兩條線各一個月台
+
+
+def test_build_travel_graph_adds_bidirectional_ride_and_transfer_edges():
+    graph = _build_travel_graph(SEGMENTS, GROUPS)
+
+    assert ("BL2", 120, "ride") in graph["BL1"]
+    assert ("BL1", 120, "ride") in graph["BL2"]  # 搭車段雙向
+    assert ("R2", mrt_module.INTERCHANGE_WALK_SECONDS, "transfer") in graph["BL2"]
+    assert ("BL2", mrt_module.INTERCHANGE_WALK_SECONDS, "transfer") in graph["R2"]
+
+
+def test_shortest_travel_same_line_has_no_transfer():
+    graph = _build_travel_graph(SEGMENTS, GROUPS)
+
+    total, ride, transfer, nodes = _shortest_travel(graph, "BL1", "BL3")
+
+    assert (total, ride, transfer, nodes) == (250, 250, 0, [])
+
+
+def test_shortest_travel_cross_line_splits_ride_and_transfer():
+    graph = _build_travel_graph(SEGMENTS, GROUPS)
+    walk = mrt_module.INTERCHANGE_WALK_SECONDS
+
+    total, ride, transfer, nodes = _shortest_travel(graph, "BL1", "R3")
+
+    assert total == 120 + walk + 120
+    assert ride == 240
+    assert transfer == walk
+    assert nodes == ["BL2"]
+
+
+def test_shortest_travel_returns_zero_for_same_station():
+    graph = _build_travel_graph(SEGMENTS, GROUPS)
+
+    assert _shortest_travel(graph, "BL1", "BL1") == (0, 0, 0, [])
+
+
+def test_shortest_travel_returns_none_when_no_path():
+    graph = _build_travel_graph(SEGMENTS, [])  # 沒有轉乘站，BL 線到不了 R 線
+
+    assert _shortest_travel(graph, "BL1", "R3") is None
+
+
+def test_shortest_travel_returns_none_when_station_unknown():
+    graph = _build_travel_graph(SEGMENTS, GROUPS)
+
+    assert _shortest_travel(graph, "BL1", "X9") is None
+
+
+# ---- _format_travel_time_text --------------------------------------------------
+
+
+def test_format_travel_time_text_shows_transfer_breakdown():
+    text = _format_travel_time_text(
+        "臺北捷運", "永寧", "淡水", {"BL2": "忠孝復興"}, (420, 240, 180, ["BL2"])
+    )
+
+    assert "🚇 永寧 → 淡水" in text
+    assert "最少約 7 分鐘" in text
+    assert "車上約 4 分 + 轉乘步行約 3 分" in text
+    assert "🔁 轉乘 1 次：忠孝復興" in text
+
+
+def test_format_travel_time_text_without_transfer_omits_breakdown():
+    text = _format_travel_time_text("臺北捷運", "永寧", "南港", {}, (250, 250, 0, []))
+
+    assert "最少約 4 分鐘" in text
+    assert "轉乘" not in text
+    assert "車上約" not in text
+
+
+# ---- mrttime handlers --------------------------------------------------------
+
+
+async def test_mrttime_command_sends_rail_system_keyboard(make_update, make_context):
+    update = make_update(text="/mrttime")
+
+    await mrttime(update, make_context())
+
+    _, kwargs = update.message.reply_text.call_args
+    all_texts = [b.text for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert "臺北捷運" in all_texts
+
+
+async def test_handle_mrttime_system_callback_without_credentials_notifies_admin(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt.TDX_CLIENT_ID", None)
+    mocker.patch("bot.mrt.TDX_CLIENT_SECRET", None)
+    update = make_callback_update("mrttime:system:TRTC")
+    context = make_context()
+
+    await handle_mrttime_system_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "TDX_CLIENT_ID" in text
+
+
+async def test_handle_mrttime_system_callback_success_sends_origin_line_keyboard(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt.TDX_CLIENT_ID", "id")
+    mocker.patch("bot.mrt.TDX_CLIENT_SECRET", "secret")
+    lines = {"L1": {"name": "測試線", "stations": [("S1", "第一站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("mrttime:system:TRTC")
+    context = make_context()
+
+    await handle_mrttime_system_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["mrttime:oline:TRTC:L1"]
+
+
+async def test_handle_mrttime_origin_line_callback_sends_origin_station_keyboard(
+    make_callback_update, make_context, mocker
+):
+    lines = {"L1": {"name": "測試線", "stations": [("S1", "第一站"), ("S2", "第二站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("mrttime:oline:TRTC:L1")
+    context = make_context()
+
+    await handle_mrttime_origin_line_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["mrttime:ostn:TRTC:S1", "mrttime:ostn:TRTC:S2"]
+
+
+async def test_handle_mrttime_origin_station_callback_sends_dest_line_keyboard(
+    make_callback_update, make_context, mocker
+):
+    lines = {"L1": {"name": "測試線", "stations": [("S1", "第一站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("mrttime:ostn:TRTC:S1")
+    context = make_context()
+
+    await handle_mrttime_origin_station_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["mrttime:dline:TRTC:S1:L1"]
+
+
+async def test_handle_mrttime_dest_line_callback_excludes_origin_station(
+    make_callback_update, make_context, mocker
+):
+    lines = {"L2": {"name": "測試線二", "stations": [("S1", "第一站"), ("S2", "第二站"), ("S3", "第三站")]}}
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=lines))
+    update = make_callback_update("mrttime:dline:TRTC:S1:L2")
+    context = make_context()
+
+    await handle_mrttime_dest_line_callback(update, context)
+
+    kwargs = context.bot.send_message.call_args.kwargs
+    callback_data = [b.callback_data for row in kwargs["reply_markup"].inline_keyboard for b in row]
+    assert callback_data == ["mrttime:dstn:TRTC:S1:S2", "mrttime:dstn:TRTC:S1:S3"]
+
+
+_CROSS_LINE_LINES = {
+    "BL": {"name": "板南線", "stations": [("BL1", "永寧"), ("BL2", "忠孝復興"), ("BL3", "南港")]},
+    "R": {"name": "淡水信義線", "stations": [("R1", "象山"), ("R2", "忠孝復興"), ("R3", "淡水")]},
+}
+_DISCONNECTED_LINES = {
+    "BL": {"name": "板南線", "stations": [("BL1", "永寧"), ("BL2", "板橋"), ("BL3", "南港")]},
+    "R": {"name": "淡水信義線", "stations": [("R1", "象山"), ("R2", "大安"), ("R3", "淡水")]},
+}
+
+
+async def test_handle_mrttime_dest_station_callback_no_path_sends_error(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=_DISCONNECTED_LINES))
+    mocker.patch("bot.mrt._load_system_travel_times", new=AsyncMock(return_value=SEGMENTS))
+    update = make_callback_update("mrttime:dstn:TRTC:BL1:R3")
+    context = make_context()
+
+    await handle_mrttime_dest_station_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到這兩站之間的行車時間" in text
+
+
+async def test_handle_mrttime_dest_station_callback_missing_travel_times_sends_error(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=_CROSS_LINE_LINES))
+    mocker.patch("bot.mrt._load_system_travel_times", new=AsyncMock(return_value=None))
+    update = make_callback_update("mrttime:dstn:TRTC:BL1:R3")
+    context = make_context()
+
+    await handle_mrttime_dest_station_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "查不到這兩站之間的行車時間" in text
+
+
+async def test_handle_mrttime_dest_station_callback_cross_line_success(
+    make_callback_update, make_context, mocker
+):
+    mocker.patch("bot.mrt._load_system_lines", new=AsyncMock(return_value=_CROSS_LINE_LINES))
+    mocker.patch("bot.mrt._load_system_travel_times", new=AsyncMock(return_value=SEGMENTS))
+    update = make_callback_update("mrttime:dstn:TRTC:BL1:R3")
+    context = make_context()
+
+    await handle_mrttime_dest_station_callback(update, context)
+
+    text = context.bot.send_message.call_args.args[1]
+    assert "永寧 → 淡水" in text
+    assert "🔁 轉乘 1 次：忠孝復興" in text

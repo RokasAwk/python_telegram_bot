@@ -24,8 +24,14 @@ from .mrt import (
     handle_mrt_line_callback,
     handle_mrt_station_callback,
     handle_mrt_system_callback,
+    handle_mrttime_dest_line_callback,
+    handle_mrttime_dest_station_callback,
+    handle_mrttime_origin_line_callback,
+    handle_mrttime_origin_station_callback,
+    handle_mrttime_system_callback,
     mrt,
     mrtfare,
+    mrttime,
 )
 from .net import KEEPALIVE_SOCKET_OPTIONS
 from .ooxx import (
@@ -54,6 +60,7 @@ BOT_COMMANDS = [
     BotCommand("weather", "查詢台灣各縣市天氣"),
     BotCommand("mrt", "查詢捷運車站出入口資訊"),
     BotCommand("mrtfare", "查詢捷運兩站間的全票票價"),
+    BotCommand("mrttime", "查詢捷運兩站間的行車時間（可跨線）"),
     BotCommand("thsrtime", "查詢高鐵今日時刻表"),
     BotCommand("thsrfare", "查詢高鐵兩站間的全票票價"),
     BotCommand("attack", "攻擊荒野猛獸，開始決鬥"),
@@ -95,6 +102,7 @@ def main():
     app.add_handler(CommandHandler("weather", weather))
     app.add_handler(CommandHandler("mrt", mrt))
     app.add_handler(CommandHandler("mrtfare", mrtfare))
+    app.add_handler(CommandHandler("mrttime", mrttime))
     app.add_handler(CommandHandler("thsrtime", thsrtime))
     app.add_handler(CommandHandler("thsrfare", thsrfare))
     app.add_handler(CommandHandler("attack", attack_command))
@@ -120,6 +128,11 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_fare_origin_station_callback, pattern=r"^fare:origin_station:"))
     app.add_handler(CallbackQueryHandler(handle_fare_dest_line_callback, pattern=r"^fare:dest_line:"))
     app.add_handler(CallbackQueryHandler(handle_fare_dest_station_callback, pattern=r"^fare:dest_station:"))
+    app.add_handler(CallbackQueryHandler(handle_mrttime_system_callback, pattern=r"^mrttime:system:"))
+    app.add_handler(CallbackQueryHandler(handle_mrttime_origin_line_callback, pattern=r"^mrttime:oline:"))
+    app.add_handler(CallbackQueryHandler(handle_mrttime_origin_station_callback, pattern=r"^mrttime:ostn:"))
+    app.add_handler(CallbackQueryHandler(handle_mrttime_dest_line_callback, pattern=r"^mrttime:dline:"))
+    app.add_handler(CallbackQueryHandler(handle_mrttime_dest_station_callback, pattern=r"^mrttime:dstn:"))
     app.add_handler(CallbackQueryHandler(handle_thsrtime_origin_callback, pattern=r"^thsrtime:origin:"))
     app.add_handler(CallbackQueryHandler(handle_thsrtime_dest_callback, pattern=r"^thsrtime:dest:"))
     app.add_handler(CallbackQueryHandler(handle_thsrfare_origin_callback, pattern=r"^thsrfare:origin:"))

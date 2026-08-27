@@ -316,6 +316,32 @@ def test_format_fare_text_shows_placeholder_when_standard_fare_missing():
     assert "商務車廂" not in text
 
 
+# ---- callback menu buttons ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "callback_data, handler_name",
+    [
+        ("thsrtime:origin:0990", "handle_thsrtime_origin_callback"),
+        ("thsrtime:dest:0990:1000", "handle_thsrtime_dest_callback"),
+        ("thsrfare:origin:0990", "handle_thsrfare_origin_callback"),
+        ("thsrfare:dest:0990:1000", "handle_thsrfare_dest_callback"),
+    ],
+)
+async def test_tdx_callbacks_dismiss_menu_buttons(
+    make_callback_update, make_context, mocker, callback_data, handler_name
+):
+    mocker.patch("bot.thsr._load_stations", new=AsyncMock(return_value=None))
+    mocker.patch("bot.thsr._fetch_daily_timetable", new=AsyncMock(return_value=None))
+    mocker.patch("bot.thsr._fetch_od_fare", new=AsyncMock(return_value=None))
+    update = make_callback_update(callback_data)
+    update.callback_query.edit_message_reply_markup = AsyncMock()
+
+    await getattr(thsr_module, handler_name)(update, make_context())
+
+    update.callback_query.edit_message_reply_markup.assert_awaited_once_with(reply_markup=None)
+
+
 # ---- thsrtime handlers -------------------------------------------------------------
 
 
