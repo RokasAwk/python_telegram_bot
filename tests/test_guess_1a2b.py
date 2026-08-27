@@ -40,7 +40,7 @@ async def test_rule_guess_1a2b_rejects_non_four_digit_input(make_update, make_co
     handled = await rule_guess_1a2b(update, context, "哈囉")
 
     assert handled is True
-    update.message.reply_text.assert_awaited_once_with("只能輸入四位數字啦汪！")
+    update.message.reply_text.assert_awaited_once_with("只能輸入不重複的四位數字啦汪！")
     assert context.chat_data["ab_count"] == 0
 
 
@@ -52,7 +52,7 @@ async def test_rule_guess_1a2b_rejects_wrong_length_number(make_update, make_con
     handled = await rule_guess_1a2b(update, context, "123")
 
     assert handled is True
-    update.message.reply_text.assert_awaited_once_with("只能輸入四位數字啦汪！")
+    update.message.reply_text.assert_awaited_once_with("只能輸入不重複的四位數字啦汪！")
     assert context.chat_data["ab_count"] == 0
 
 
@@ -77,7 +77,7 @@ async def test_rule_guess_1a2b_correct_guess_wins_and_resets_state(make_update, 
     handled = await rule_guess_1a2b(update, context, "1874")
 
     assert handled is True
-    update.message.reply_text.assert_awaited_once_with("4A！賓果，答案就是1874！你總共猜了3次，太厲害啦～🎉")
+    update.message.reply_text.assert_awaited_once_with("賓果，答案就是1874！你總共猜了3次，太厲害啦～🎉")
     assert "ab_active" not in context.chat_data
     assert "ab_answer" not in context.chat_data
     assert "ab_count" not in context.chat_data
