@@ -28,6 +28,12 @@ from .mrt import (
     mrtfare,
 )
 from .net import KEEPALIVE_SOCKET_OPTIONS
+from .ooxx import (
+    handle_ooxx_again_callback,
+    handle_ooxx_move_callback,
+    ooxx_command,
+    stop_ooxx_command,
+)
 from .text_dispatch import handle_text
 from .thsr import (
     handle_thsrfare_dest_callback,
@@ -56,6 +62,8 @@ BOT_COMMANDS = [
     BotCommand("stopguess", "中止正在進行的終極密碼遊戲"),
     BotCommand("guess1a2b", "跟壽司小狼玩1A2B猜數字遊戲"),
     BotCommand("stop1a2b", "中止正在進行的1A2B遊戲"),
+    BotCommand("ooxx", "跟壽司小狼玩OOXX井字遊戲"),
+    BotCommand("stopooxx", "中止正在進行的OOXX遊戲"),
 ]
 
 
@@ -95,9 +103,13 @@ def main():
     app.add_handler(CommandHandler("stopguess", stop_guess_command))
     app.add_handler(CommandHandler("guess1a2b", guess_1a2b_command))
     app.add_handler(CommandHandler("stop1a2b", stop_1a2b_command))
+    app.add_handler(CommandHandler("ooxx", ooxx_command))
+    app.add_handler(CommandHandler("stopooxx", stop_ooxx_command))
     app.add_handler(
         CallbackQueryHandler(handle_attack_callback, pattern=f"^{ATTACK_CALLBACK_DATA}$")
     )
+    app.add_handler(CallbackQueryHandler(handle_ooxx_move_callback, pattern=r"^ooxx:move:"))
+    app.add_handler(CallbackQueryHandler(handle_ooxx_again_callback, pattern=r"^ooxx:again:"))
     app.add_handler(CallbackQueryHandler(handle_weather_city_callback, pattern=r"^weather:city:"))
     app.add_handler(CallbackQueryHandler(handle_weather_period_callback, pattern=r"^weather:period:"))
     app.add_handler(CallbackQueryHandler(handle_mrt_system_callback, pattern=r"^mrt:system:"))

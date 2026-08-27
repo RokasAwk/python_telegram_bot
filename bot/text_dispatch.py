@@ -15,6 +15,7 @@ from .chat_rules import (
 from .duel import rule_duel
 from .guess_1a2b import rule_guess_1a2b
 from .guess_number import rule_guess_number
+from .ooxx import rule_ooxx
 from .rps import rule_rps
 
 # 依序執行，允許同一則訊息命中多條規則（對應原本 PHP 一連串獨立 if 的行為）
@@ -31,6 +32,7 @@ TEXT_RULES = [
     rule_oracle,
     rule_refuse,
     rule_rps,
+    rule_ooxx,
     rule_duel,
 ]
 
