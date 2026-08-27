@@ -120,15 +120,18 @@ async def test_move_on_occupied_cell_nags_and_does_not_advance(make_callback_upd
     assert context.chat_data["ooxx_board"] == _board("O.. ... ...")
 
 
-async def test_move_when_game_over_tells_user_to_restart(make_callback_update, make_context):
+async def test_move_when_game_over_only_pops_ended_toast(make_callback_update, make_context):
     update = make_callback_update("ooxx:move:0")
-    context = make_context()  # 沒有 ooxx_active
+    context = make_context()
+    # 結束訊息上的最終盤面按鈕還在，但遊戲已非進行中
+    context.chat_data.update({"ooxx_active": False, "ooxx_board": _board("OOO XX. ...")})
 
     await handle_ooxx_move_callback(update, context)
 
     (msg,), _ = update.callback_query.answer.call_args
-    assert "/ooxx" in msg
+    assert "已經結束" in msg and "/ooxx" in msg
     context.bot.send_message.assert_not_called()
+    assert update.callback_query.answer.await_args.kwargs.get("show_alert") in (None, False)
 
 
 async def test_valid_move_places_o_then_asks_ai_and_places_x(make_callback_update, make_context, mocker):
@@ -165,9 +168,12 @@ async def test_ai_illegal_answer_falls_back_to_local_strategy(make_callback_upda
     assert board[0] == USER_MARK  # 沒有被覆蓋
 
 
-async def test_user_winning_move_ends_game_with_play_again_buttons(make_callback_update, make_context, mocker):
+async def test_user_winning_move_ends_game_by_editing_buttons_not_a_message(
+    make_callback_update, make_context, mocker
+):
     ask_mock = mocker.patch("bot.ooxx.ask_ooxx_move", new=AsyncMock())
     update = make_callback_update("ooxx:move:2")
+    update.callback_query.edit_message_reply_markup = AsyncMock()
     context = make_context()
     context.chat_data.update({"ooxx_active": True, "ooxx_board": _board("OO. .XX ...")})
 
@@ -175,29 +181,35 @@ async def test_user_winning_move_ends_game_with_play_again_buttons(make_callback
 
     ask_mock.assert_not_called()  # 使用者贏了就不該再問 AI
     assert context.chat_data["ooxx_active"] is False
-    args, kwargs = context.bot.send_message.call_args
-    assert "你贏" in args[1]
-    labels = [b.text for b in kwargs["reply_markup"].inline_keyboard[0]]
-    assert labels == ["離開", "再來一場！"]
+    context.bot.send_message.assert_not_called()  # 結果不用訊息呈現
+    markup = update.callback_query.edit_message_reply_markup.await_args.kwargs["reply_markup"]
+    keyboard = markup.inline_keyboard
+    # 前三排照樣用按鈕呈現最終盤面，最後一排是離開／再來一場
+    assert [b.callback_data for row in keyboard[:3] for b in row] == [f"ooxx:move:{i}" for i in range(9)]
+    assert keyboard[0][2].text == "⭕"  # 使用者剛下的致勝格
+    assert [b.text for b in keyboard[-1]] == ["離開", "再來一場！"]
 
 
-async def test_ai_winning_move_ends_game(make_callback_update, make_context, mocker):
+async def test_ai_winning_move_ends_game_by_editing_buttons(make_callback_update, make_context, mocker):
     mocker.patch("bot.ooxx.ask_ooxx_move", new=AsyncMock(return_value=8))
     update = make_callback_update("ooxx:move:3")
+    update.callback_query.edit_message_reply_markup = AsyncMock()
     context = make_context()
     context.chat_data.update({"ooxx_active": True, "ooxx_board": _board("..X .OX O..")})
 
     await handle_ooxx_move_callback(update, context)
 
     assert context.chat_data["ooxx_active"] is False
-    args, kwargs = context.bot.send_message.call_args
-    assert "我贏" in args[1]
-    assert kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "ooxx:again:no"
+    context.bot.send_message.assert_not_called()
+    keyboard = update.callback_query.edit_message_reply_markup.await_args.kwargs["reply_markup"].inline_keyboard
+    assert keyboard[-1][0].callback_data == "ooxx:again:no"
+    assert keyboard[2][2].text == "❌"  # AI 剛下的致勝格 (index 8)
 
 
 async def test_full_board_without_winner_is_a_draw(make_callback_update, make_context, mocker):
     mocker.patch("bot.ooxx.ask_ooxx_move", new=AsyncMock())
     update = make_callback_update("ooxx:move:8")
+    update.callback_query.edit_message_reply_markup = AsyncMock()
     context = make_context()
     # 使用者下最後一格 8 就填滿，且沒有任何連線
     context.chat_data.update({"ooxx_active": True, "ooxx_board": _board("OXO OXX XO.")})
@@ -205,7 +217,10 @@ async def test_full_board_without_winner_is_a_draw(make_callback_update, make_co
     await handle_ooxx_move_callback(update, context)
 
     assert context.chat_data["ooxx_active"] is False
-    assert "平手" in context.bot.send_message.call_args.args[1]
+    context.bot.send_message.assert_not_called()
+    keyboard = update.callback_query.edit_message_reply_markup.await_args.kwargs["reply_markup"].inline_keyboard
+    assert [b.text for b in keyboard[-1]] == ["離開", "再來一場！"]
+    assert set(b.text for row in keyboard[:3] for b in row) == {"⭕", "❌"}  # 盤面填滿
 
 
 # ---- 再來一場 / 離開 -------------------------------------------------

@@ -22,15 +22,11 @@ GAME_STATE_KEYS = ("ooxx_active", "ooxx_board")
 
 INTRO = "來玩OOXX啦！\n你是⭕（先手），壽司小狼是❌。\n\n"
 
-# 遊戲結束後才跳出來的按鈕，選完就會銷毀，避免事後誤觸
-PLAY_AGAIN_KEYBOARD = InlineKeyboardMarkup(
-    [
-        [
-            InlineKeyboardButton("離開", callback_data="ooxx:again:no"),
-            InlineKeyboardButton("再來一場！", callback_data="ooxx:again:yes"),
-        ]
-    ]
-)
+# 遊戲結束後接在最終盤面下面的那一排按鈕，選完就會銷毀，避免事後誤觸
+PLAY_AGAIN_ROW = [
+    InlineKeyboardButton("離開", callback_data="ooxx:again:no"),
+    InlineKeyboardButton("再來一場！", callback_data="ooxx:again:yes"),
+]
 
 
 def _new_board() -> list[str]:
@@ -47,19 +43,26 @@ def _clear_game(chat_data) -> None:
         chat_data.pop(key, None)
 
 
+def _board_button_rows(board: list[str]) -> list[list[InlineKeyboardButton]]:
+    return [
+        [
+            InlineKeyboardButton(
+                MARK_SYMBOLS[board[i]] if board[i] != EMPTY else POSITION_LABELS[i],
+                callback_data=f"ooxx:move:{i}",
+            )
+            for i in range(r, r + 3)
+        ]
+        for r in (0, 3, 6)
+    ]
+
+
 def move_keyboard(board: list[str]) -> InlineKeyboardMarkup:
-    rows = []
-    for r in (0, 3, 6):
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    MARK_SYMBOLS[board[i]] if board[i] != EMPTY else POSITION_LABELS[i],
-                    callback_data=f"ooxx:move:{i}",
-                )
-                for i in range(r, r + 3)
-            ]
-        )
-    return InlineKeyboardMarkup(rows)
+    return InlineKeyboardMarkup(_board_button_rows(board))
+
+
+def result_keyboard(board: list[str]) -> InlineKeyboardMarkup:
+    """結束訊息用：一樣用按鈕畫出最終盤面，下面多一排「離開／再來一場！」。"""
+    return InlineKeyboardMarkup([*_board_button_rows(board), PLAY_AGAIN_ROW])
 
 
 def _winner(board: list[str]) -> str | None:
@@ -125,14 +128,10 @@ async def stop_ooxx_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("好啦好啦，這場OOXX不算，想玩再跟我說 /ooxx！")
 
 
-async def _send_result(update: Update, context: ContextTypes.DEFAULT_TYPE, message: str):
-    """宣布結果，並附上「離開／再來一場！」按鈕（不再多傳一則訊息）。"""
-    context.chat_data["ooxx_active"] = False
-    await context.bot.send_message(
-        update.effective_chat.id,
-        message,
-        reply_markup=PLAY_AGAIN_KEYBOARD,
-    )
+async def _finish(query, chat_data) -> None:
+    """遊戲結束：不發任何訊息，直接把剛剛那則訊息的按鈕換成最終盤面 + 「離開／再來一場！」。"""
+    chat_data["ooxx_active"] = False
+    await query.edit_message_reply_markup(reply_markup=result_keyboard(chat_data["ooxx_board"]))
 
 
 async def handle_ooxx_move_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -149,31 +148,26 @@ async def handle_ooxx_move_callback(update: Update, context: ContextTypes.DEFAUL
         await query.answer("喂喂～那格早就被卡走了啦，換一格啦！😜")
         return
 
-    await query.answer()
     board[idx] = USER_MARK
+    if _winner(board) == USER_MARK or _is_full(board):
+        await query.answer()
+        await _finish(query, chat_data)
+        return
 
-    if _winner(board) == USER_MARK:
-        await _send_result(update, context, "哇賽，你連成一條線了，這場你贏啦！🎉")
-        return
-    if _is_full(board):
-        await _send_result(update, context, "格子填滿了，這場平手！🤝")
-        return
+    await query.answer()  # 使用者這步還沒分勝負，先把按鈕的轉圈圈解掉
 
     ai_idx = await ask_ooxx_move(board)
     if ai_idx is None or not (0 <= ai_idx < BOARD_SIZE) or board[ai_idx] != EMPTY:
         ai_idx = _fallback_move(board)
     board[ai_idx] = AI_MARK
 
-    if _winner(board) == AI_MARK:
-        await _send_result(update, context, f"我下在第 {ai_idx + 1} 格，連成一條線啦，這場我贏！😎")
-        return
-    if _is_full(board):
-        await _send_result(update, context, "格子填滿了，這場平手！🤝")
+    if _winner(board) == AI_MARK or _is_full(board):
+        await _finish(query, chat_data)
         return
 
     await context.bot.send_message(
         update.effective_chat.id,
-        f"我下在第 {ai_idx + 1} 格！\n換你了～",
+        f"我下在第 {ai_idx + 1} 格！換你了～",
         reply_markup=move_keyboard(board),
     )
 
