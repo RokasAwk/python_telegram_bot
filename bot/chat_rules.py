@@ -61,7 +61,9 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "/attack - 攻擊荒野猛獸，開始決鬥\n"
         "/stop - 中止正在進行的決鬥\n"
         "/guessnumber - 跟我玩終極密碼猜數字遊戲\n"
-        "/stopguess - 中止正在進行的終極密碼遊戲"
+        "/stopguess - 中止正在進行的終極密碼遊戲\n"
+        "/guess1a2b - 跟我玩1A2B猜數字遊戲\n"
+        "/stop1a2b - 中止正在進行的1A2B遊戲"
     )
     return True
 
