@@ -21,10 +21,19 @@ TDX_CLIENT_SECRET = os.environ.get("TDX_CLIENT_SECRET")
 TDX_AUTH_URL = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
 TDX_API_BASE_URL = "https://tdx.transportdata.tw/api/basic"
 
+# 數獨 Mini App 的網址（另一個公開 repo RokasAwk/sushi-wolf-miniapp 的 GitHub Pages）；換網址時可用環境變數覆蓋
+SUDOKU_WEBAPP_URL = os.environ.get(
+    "SUDOKU_WEBAPP_URL", "https://rokasawk.github.io/sushi-wolf-miniapp/sudoku/"
+)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger("telegram_bot")
+
+# httpx 預設會在 INFO 記下每個請求的完整網址，而 Telegram API 的網址裡含有 bot token，
+# 調成 WARNING 避免 token 外洩到日誌（docker logs 等）
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 STICKER_ID = "CAACAgUAAxkBAANuYkJtvnLvttU_7vhpqBn3Y7FIIYkAAkcFAAKIOolUbN1l5sfsXuwjBA"

@@ -40,6 +40,7 @@ from .ooxx import (
     ooxx_command,
     stop_ooxx_command,
 )
+from .sudoku import handle_sudoku_web_app_data, stop_sudoku_command, sudoku_command
 from .text_dispatch import handle_text
 from .thsr import (
     handle_thsrfare_dest_callback,
@@ -71,6 +72,8 @@ BOT_COMMANDS = [
     BotCommand("stop1a2b", "中止正在進行的1A2B遊戲"),
     BotCommand("ooxx", "跟壽司小狼玩OOXX井字遊戲"),
     BotCommand("stopooxx", "中止正在進行的OOXX遊戲"),
+    BotCommand("sudoku", "跟壽司小狼玩數獨"),
+    BotCommand("stopsudoku", "收起數獨的開啟按鈕"),
 ]
 
 
@@ -113,6 +116,8 @@ def main():
     app.add_handler(CommandHandler("stop1a2b", stop_1a2b_command))
     app.add_handler(CommandHandler("ooxx", ooxx_command))
     app.add_handler(CommandHandler("stopooxx", stop_ooxx_command))
+    app.add_handler(CommandHandler("sudoku", sudoku_command))
+    app.add_handler(CommandHandler("stopsudoku", stop_sudoku_command))
     app.add_handler(
         CallbackQueryHandler(handle_attack_callback, pattern=f"^{ATTACK_CALLBACK_DATA}$")
     )
@@ -138,6 +143,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_thsrfare_origin_callback, pattern=r"^thsrfare:origin:"))
     app.add_handler(CallbackQueryHandler(handle_thsrfare_dest_callback, pattern=r"^thsrfare:dest:"))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_sudoku_web_app_data))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
 
