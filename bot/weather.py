@@ -13,6 +13,13 @@ from .config import CWA_API_KEY, CWA_DATASTORE_BASE_URL, logger
 _CWA_SSL_CONTEXT = httpx.create_ssl_context()
 _CWA_SSL_CONTEXT.verify_flags &= ~ssl.VERIFY_X509_STRICT
 
+
+# 金鑰放在 header 而不是網址 query：httpx 出錯時（例如 raise_for_status）例外訊息會帶上完整網址，
+# 若金鑰在網址裡就會被 logger.exception 一起寫進日誌
+def _cwa_headers() -> dict:
+    return {"Authorization": CWA_API_KEY}
+
+
 # 中央氣象署已下架縣市層級的「一週縣市天氣預報」（F-C0032-005），一週資料現在併進
 # 鄉鎮天氣預報（F-D0047 系列），每個縣市各自一組 dataset id，且是以鄉鎮為單位。
 # 這裡幫每個縣市挑一個代表行政區（多為縣市政府所在地）來查詢。
@@ -121,13 +128,12 @@ async def fetch_daily_weather_text(city: str) -> str:
         return "還沒設定 CWA_API_KEY，小狼查不到天氣，跟壽司狼哥哥說一下吧！"
 
     params = {
-        "Authorization": CWA_API_KEY,
         "locationName": city,
         "elementName": "Wx,MaxT,MinT,PoP",
     }
     try:
         async with httpx.AsyncClient(timeout=10, verify=_CWA_SSL_CONTEXT) as client:
-            resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{DAILY_FORECAST_DATASET_ID}", params=params)
+            resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{DAILY_FORECAST_DATASET_ID}", params=params, headers=_cwa_headers())
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError:
@@ -181,13 +187,12 @@ async def fetch_3day_weather_text(city: str) -> str:
         return "還沒設定 CWA_API_KEY，小狼查不到天氣，跟壽司狼哥哥說一下吧！"
 
     params = {
-        "Authorization": CWA_API_KEY,
         "LocationName": township,
         "ElementName": "天氣現象,溫度,3小時降雨機率",
     }
     try:
         async with httpx.AsyncClient(timeout=10, verify=_CWA_SSL_CONTEXT) as client:
-            resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{dataset_id}", params=params)
+            resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{dataset_id}", params=params, headers=_cwa_headers())
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError:
@@ -265,13 +270,12 @@ async def fetch_weekly_weather_text(city: str) -> str:
         return "還沒設定 CWA_API_KEY，小狼查不到天氣，跟壽司狼哥哥說一下吧！"
 
     params = {
-        "Authorization": CWA_API_KEY,
         "LocationName": township,
         "ElementName": "天氣現象,最高溫度,最低溫度,12小時降雨機率",
     }
     try:
         async with httpx.AsyncClient(timeout=10, verify=_CWA_SSL_CONTEXT) as client:
-            resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{dataset_id}", params=params)
+            resp = await client.get(f"{CWA_DATASTORE_BASE_URL}/{dataset_id}", params=params, headers=_cwa_headers())
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError:
