@@ -18,10 +18,13 @@ from .guess_number import rule_guess_number
 from .ooxx import rule_ooxx
 from .rps import rule_rps
 from .sudoku import rule_sudoku
+from .translate import rule_translate_mention
 
 # 依序執行，允許同一則訊息命中多條規則（對應原本 PHP 一連串獨立 if 的行為）
 # rule_guess_number、rule_guess_1a2b 放最前面：猜數字遊戲進行中時，要把每一則訊息都當成猜測，不能被其他規則搶走
+# rule_translate_mention 放最前面：明確指定要翻譯的訊息，不能被遊戲規則當成猜測吃掉
 TEXT_RULES = [
+    rule_translate_mention,
     rule_guess_number,
     rule_guess_1a2b,
     rule_identity,

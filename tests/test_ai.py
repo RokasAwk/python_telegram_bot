@@ -56,3 +56,29 @@ async def test_ask_ai_returns_none_on_unexpected_exception(mocker):
 
     assert result is None
     logger_mock.exception.assert_called_once()
+
+
+async def test_translate_returns_stripped_text_with_language_in_prompt(mocker):
+    from bot.ai import translate
+
+    mock_client = MagicMock()
+    mock_client.aio.models.generate_content = AsyncMock(return_value=MagicMock(text=" 今日はいい天気ですね \n"))
+    mocker.patch("bot.ai._client", mock_client)
+
+    result = await translate("今天天氣真好", "日文")
+
+    assert result == "今日はいい天気ですね"
+    call = mock_client.aio.models.generate_content.call_args
+    assert call.kwargs["contents"] == "今天天氣真好"
+    assert "日文" in call.kwargs["config"].system_instruction
+
+
+async def test_translate_returns_none_on_error(mocker):
+    from bot.ai import translate
+
+    mock_client = MagicMock()
+    mock_client.aio.models.generate_content = AsyncMock(side_effect=errors.ClientError(429, {}))
+    mocker.patch("bot.ai._client", mock_client)
+    mocker.patch("bot.ai.logger")
+
+    assert await translate("你好", "英文") is None

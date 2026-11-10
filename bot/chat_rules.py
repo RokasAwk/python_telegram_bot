@@ -68,7 +68,9 @@ async def rule_capability(update: Update, context: ContextTypes.DEFAULT_TYPE, te
         "/ooxx - 跟我玩OOXX井字遊戲\n"
         "/stopooxx - 中止正在進行的OOXX遊戲\n"
         "/sudoku - 跟我玩數獨\n"
-        "/stopsudoku - 收起數獨的開啟按鈕"
+        "/stopsudoku - 收起數獨的開啟按鈕\n"
+        "/trans_jp - 翻譯成日文\n"
+        "/trans_en - 翻譯成英文"
     )
     return True
 

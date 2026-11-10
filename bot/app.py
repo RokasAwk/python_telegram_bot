@@ -4,6 +4,7 @@ from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
+    InlineQueryHandler,
     MessageHandler,
     filters,
 )
@@ -42,6 +43,7 @@ from .ooxx import (
 )
 from .sudoku import handle_sudoku_web_app_data, stop_sudoku_command, sudoku_command
 from .text_dispatch import handle_text
+from .translate import handle_translate_inline_query, trans_en_command, trans_jp_command
 from .thsr import (
     handle_thsrfare_dest_callback,
     handle_thsrfare_origin_callback,
@@ -74,6 +76,8 @@ BOT_COMMANDS = [
     BotCommand("stopooxx", "中止正在進行的OOXX遊戲"),
     BotCommand("sudoku", "跟壽司小狼玩數獨"),
     BotCommand("stopsudoku", "收起數獨的開啟按鈕"),
+    BotCommand("trans_jp", "翻譯成日文"),
+    BotCommand("trans_en", "翻譯成英文"),
 ]
 
 
@@ -118,6 +122,10 @@ def main():
     app.add_handler(CommandHandler("stopooxx", stop_ooxx_command))
     app.add_handler(CommandHandler("sudoku", sudoku_command))
     app.add_handler(CommandHandler("stopsudoku", stop_sudoku_command))
+    app.add_handler(CommandHandler("trans_jp", trans_jp_command))
+    app.add_handler(CommandHandler("trans_en", trans_en_command))
+    # block=False：inline query 會 sleep 做 debounce，不能卡住其他訊息的處理
+    app.add_handler(InlineQueryHandler(handle_translate_inline_query, block=False))
     app.add_handler(
         CallbackQueryHandler(handle_attack_callback, pattern=f"^{ATTACK_CALLBACK_DATA}$")
     )
@@ -144,7 +152,8 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_thsrfare_dest_callback, pattern=r"^thsrfare:dest:"))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_sudoku_web_app_data))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # ~VIA_BOT：透過 inline 送出的訊息（例如點了即時翻譯結果送出的日文）是給聊天對象看的，不是在跟 bot 講話，不回覆
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.VIA_BOT, handle_text))
     app.add_error_handler(error_handler)
 
     logger.info("Bot 啟動中，開始用 long polling 監聽訊息...")
