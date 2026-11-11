@@ -11,3 +11,6 @@ venv/
 *.tfvars.local
 crash.log
 crash.*.log
+
+# 記事本 SQLite（本機 bind mount 的資料）
+/data/

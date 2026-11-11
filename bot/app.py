@@ -35,6 +35,13 @@ from .mrt import (
     mrttime,
 )
 from .net import KEEPALIVE_SOCKET_OPTIONS
+from .notes import (
+    cancel_note_editing,
+    delnote_command,
+    editnote_command,
+    note_command,
+    notes_command,
+)
 from .ooxx import (
     handle_ooxx_again_callback,
     handle_ooxx_move_callback,
@@ -76,6 +83,10 @@ BOT_COMMANDS = [
     BotCommand("stopooxx", "中止正在進行的OOXX遊戲"),
     BotCommand("sudoku", "跟壽司小狼玩數獨"),
     BotCommand("stopsudoku", "收起數獨的開啟按鈕"),
+    BotCommand("note", "記下一筆筆記"),
+    BotCommand("notes", "查看你的所有筆記"),
+    BotCommand("editnote", "編輯一筆筆記"),
+    BotCommand("delnote", "刪除一筆筆記"),
     BotCommand("trans_jp", "翻譯成日文"),
     BotCommand("trans_en", "翻譯成英文"),
 ]
@@ -102,6 +113,8 @@ def main():
         .build()
     )
 
+    # group=-1 比其他 handler 先跑，且不會擋掉後面真正處理指令的 handler
+    app.add_handler(MessageHandler(filters.COMMAND, cancel_note_editing), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("rename", rename))
     app.add_handler(CommandHandler("help", help_command))
@@ -122,6 +135,10 @@ def main():
     app.add_handler(CommandHandler("stopooxx", stop_ooxx_command))
     app.add_handler(CommandHandler("sudoku", sudoku_command))
     app.add_handler(CommandHandler("stopsudoku", stop_sudoku_command))
+    app.add_handler(CommandHandler("note", note_command))
+    app.add_handler(CommandHandler("notes", notes_command))
+    app.add_handler(CommandHandler("editnote", editnote_command))
+    app.add_handler(CommandHandler("delnote", delnote_command))
     app.add_handler(CommandHandler("trans_jp", trans_jp_command))
     app.add_handler(CommandHandler("trans_en", trans_en_command))
     # block=False：inline query 會 sleep 做 debounce，不能卡住其他訊息的處理

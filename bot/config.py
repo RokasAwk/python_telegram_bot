@@ -26,6 +26,10 @@ SUDOKU_WEBAPP_URL = os.environ.get(
     "SUDOKU_WEBAPP_URL", "https://rokasawk.github.io/sushi-wolf-miniapp/sudoku/"
 )
 
+# 記事本的 SQLite 檔；相對路徑以工作目錄為準（容器裡是 /app/data/notes.db），
+# data/ 要用 bind mount 掛到主機，rebuild 容器才不會把筆記清掉
+NOTES_DB_PATH = os.environ.get("NOTES_DB_PATH", "data/notes.db")
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,

@@ -89,9 +89,10 @@ jobs:
                     --tunnel-through-iap \
                     --quiet \
                     --command="
+                      sudo mkdir -p /opt/python-tg-bot/data &&
                       sudo docker pull ${IMAGE}:${{ github.sha }} &&
                       sudo docker stop python-tg-bot || true &&
                       sudo docker rm python-tg-bot || true &&
-                      sudo docker run -d --name python-tg-bot --restart unless-stopped --env-file /opt/python-tg-bot/.env ${IMAGE}:${{ github.sha }} &&
+                      sudo docker run -d --name python-tg-bot --restart unless-stopped --env-file /opt/python-tg-bot/.env -v /opt/python-tg-bot/data:/app/data ${IMAGE}:${{ github.sha }} &&
                       sudo docker image prune -f
                     "
